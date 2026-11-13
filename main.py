@@ -151,4 +151,8 @@ async def main():
     if WEBHOOK_URL: await app.bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}"); await app.run_webhook(listen="0.0.0.0", port=PORT, webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
     else: await app.run_polling()
 
-if __name__ == "__main__": asyncio.run(main())
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
