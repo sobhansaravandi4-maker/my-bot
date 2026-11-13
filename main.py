@@ -117,7 +117,16 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not is_admin(q.from_user.id): return
     admin_state.pop(q.from_user.id, None)
-    kb = [[InlineKeyboardButton("➕ تست جدید", callback_data="addq_arabic"), InlineKeyboardButton("➕ تست جدید", callback_data="addq_gharabat")], [InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")], [InlineKeyboardButton("👤 افزودن ادمین", callback_data="add_admin")], [InlineKeyboardButton("⏱ شمارش معکوس", callback_data="set_countdown")], [InlineKeyboardButton("🔙", callback_data="back_menu")]]
+    kb = [
+        [InlineKeyboardButton("➕ تست جدید (درک مطلب)", callback_data="addq_arabic")],
+        [InlineKeyboardButton("➕ تست جدید (قرابت معنایی)", callback_data="addq_gharabat")],
+        [InlineKeyboardButton("➕ تست جدید (اختیار وزنی)", callback_data="addq_weight")],
+        [InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_samii")],
+        [InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")],
+        [InlineKeyboardButton("👤 افزودن ادمین", callback_data="add_admin")],
+        [InlineKeyboardButton("⏱ شمارش معکوس", callback_data="set_countdown")],
+        [InlineKeyboardButton("🔙", callback_data="back_menu")]
+    ]
     await q.edit_message_text("⚙️ پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def manage_q(update: Update, context: ContextTypes.DEFAULT_TYPE):
