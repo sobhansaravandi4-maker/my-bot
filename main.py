@@ -2,6 +2,8 @@ import sqlite3
 import datetime
 import os
 import asyncio
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
@@ -43,6 +45,19 @@ async def check_membership(user_id, context):
             if (await context.bot.get_chat_member(ch["chat_id"], user_id)).status not in ["member", "administrator", "creator"]: return False
         except: return False
     return True
+
+# ========== وب‌سرور برای بیدار موندن ==========
+class WebServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+    def log_message(self, format, *args):
+        pass
+
+def run_web_server():
+    server = HTTPServer(('0.0.0.0', PORT), WebServer)
+    server.serve_forever()
 
 # ========== شمارش معکوس ==========
 async def countdown_job(context: ContextTypes.DEFAULT_TYPE):
@@ -187,6 +202,9 @@ async def save_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== اجرا ==========
 def main():
+    # راه‌اندازی وب‌سرور در یک ترد جداگانه
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.job_queue.run_daily(countdown_job, time=datetime.time(hour=22, minute=0))
     
