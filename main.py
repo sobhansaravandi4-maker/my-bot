@@ -126,12 +126,10 @@ async def send_morning(context: ContextTypes.DEFAULT_TYPE):
     if not is_auto_msg_on(): return
     msg = get_daily_message(True) + "\n\n" + get_todays_date_info()
     
-    # ارسال به کانال
     for name, link, chat_id in get_join_channels():
         try: await context.bot.send_message(chat_id=chat_id, text=msg)
         except: pass
 
-    # ارسال به پیوی دانش‌آموزان
     for row in cur.execute("SELECT user_id FROM users WHERE status='approved'").fetchall():
         try: await context.bot.send_message(row[0], msg)
         except: pass
@@ -140,12 +138,10 @@ async def send_night(context: ContextTypes.DEFAULT_TYPE):
     if not is_auto_msg_on(): return
     msg = get_daily_message(False) + "\n\n" + get_todays_date_info()
     
-    # ارسال به کانال
     for name, link, chat_id in get_join_channels():
         try: await context.bot.send_message(chat_id=chat_id, text=msg)
         except: pass
 
-    # ارسال به پیوی دانش‌آموزان
     for row in cur.execute("SELECT user_id FROM users WHERE status='approved'").fetchall():
         try: await context.bot.send_message(row[0], msg)
         except: pass
@@ -455,12 +451,16 @@ async def confirm_new_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     del admin_state[uid]
     await q.edit_message_text(f"✅ ادمین {new_id} با موفقیت اضافه شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
+# ========== اجرا ==========
 def main():
     threading.Thread(target=run_web_server, daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.job_queue.run_daily(countdown_job, time=datetime.time(hour=22, minute=0))
-    app.job_queue.run_daily(send_morning, time=datetime.time(hour=7, minute=0))
-    app.job_queue.run_daily(send_night, time=datetime.time(hour=22, minute=0))
+    
+    # ساعت ۳:۳۰ صبح UTC = ۷ صبح ایران
+    app.job_queue.run_daily(send_morning, time=datetime.time(hour=3, minute=30))
+    # ساعت ۱۸:۳۰ عصر UTC = ۱۰ شب ایران
+    app.job_queue.run_daily(send_night, time=datetime.time(hour=18, minute=30))
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(check_join, pattern="^check_join$"))
