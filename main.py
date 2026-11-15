@@ -83,7 +83,7 @@ conn = sqlite3.connect("bot.db", check_same_thread=False)
 cur = conn.cursor()
 cur.execute("CREATE TABLE IF NOT EXISTS attempts (user_id INTEGER, routine TEXT, used_at TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY AUTOINCREMENT, routine TEXT, q TEXT, a TEXT, b TEXT, c TEXT, d TEXT, correct TEXT, explanation TEXT)")
-cur.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, perms TEXT)") # perms: قابلیت‌ها با کاما جدا میشن
+cur.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY, perms TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS countdown (chat_id TEXT, target_date TEXT, channel_msg TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS join_channels (name TEXT, link TEXT, chat_id TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, status TEXT, name TEXT)") 
@@ -121,10 +121,17 @@ async def check_membership(user_id, context):
         except: return False
     return True
 
-# ========== جاب‌ها ==========
+# ========== جاب‌ها (پیام صبح و شب) ==========
 async def send_morning(context: ContextTypes.DEFAULT_TYPE):
     if not is_auto_msg_on(): return
     msg = get_daily_message(True) + "\n\n" + get_todays_date_info()
+    
+    # ارسال به کانال
+    for name, link, chat_id in get_join_channels():
+        try: await context.bot.send_message(chat_id=chat_id, text=msg)
+        except: pass
+
+    # ارسال به پیوی دانش‌آموزان
     for row in cur.execute("SELECT user_id FROM users WHERE status='approved'").fetchall():
         try: await context.bot.send_message(row[0], msg)
         except: pass
@@ -132,6 +139,13 @@ async def send_morning(context: ContextTypes.DEFAULT_TYPE):
 async def send_night(context: ContextTypes.DEFAULT_TYPE):
     if not is_auto_msg_on(): return
     msg = get_daily_message(False) + "\n\n" + get_todays_date_info()
+    
+    # ارسال به کانال
+    for name, link, chat_id in get_join_channels():
+        try: await context.bot.send_message(chat_id=chat_id, text=msg)
+        except: pass
+
+    # ارسال به پیوی دانش‌آموزان
     for row in cur.execute("SELECT user_id FROM users WHERE status='approved'").fetchall():
         try: await context.bot.send_message(row[0], msg)
         except: pass
@@ -250,7 +264,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb.append([InlineKeyboardButton("🔙", callback_data="back_menu")])
     await q.edit_message_text("⚙️ پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
-# ========== مدیریت ادمین‌ها ==========
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not has_perm(q.from_user.id, "manage_admins"): return
@@ -302,7 +315,6 @@ async def del_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("DELETE FROM admins WHERE user_id=?", (uid,)); conn.commit()
     await q.edit_message_text(f"✅ ادمین {uid} حذف شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="list_admins")]]))
 
-# ========== مدیریت کاربران و پیام ==========
 async def toggle_auto_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not has_perm(q.from_user.id, "manage_broadcast"): return
@@ -325,7 +337,6 @@ async def del_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("UPDATE users SET status='none' WHERE user_id=?", (uid,)); conn.commit()
     await q.edit_message_text(f"✅ دسترسی کاربر {uid} قطع شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_users")]]))
 
-# ========== بقیه توابع ==========
 async def manage_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not has_perm(q.from_user.id, "manage_channels"): return
@@ -391,11 +402,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_id = int(t)
             s["new_admin_id"] = new_id
             s["step"] = "add_admin_perms"
+            s["new_perms"] = []
             kb = []
             for p, label in [("manage_tests", "مدیریت تست‌ها"), ("manage_admins", "مدیریت ادمین‌ها"), ("manage_students", "مدیریت دانش‌آموزان"), ("manage_channels", "مدیریت کانال‌ها"), ("manage_broadcast", "ارسال خودکار"), ("manage_countdown", "شمارش معکوس")]:
                 kb.append([InlineKeyboardButton(f"❌ {label}", callback_data=f"set_new_perm_{p}")])
             kb.append([InlineKeyboardButton("✅ ثبت ادمین", callback_data="confirm_new_admin")])
-            await update.message.reply_text("دسترسی‌های این ادمین را انتخاب کنید (روی هر کدام کلیک کنید تا ✅ شود):", reply_markup=InlineKeyboardMarkup(kb))
+            await update.message.reply_text("دسترسی‌های این ادمین را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(kb))
         except: await update.message.reply_text("❌ عدد بفرست:")
     
     elif step == "join_name": s["name"] = t; s["step"] = "join_link"; await update.message.reply_text("۲. لینک:")
@@ -413,7 +425,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         temp_questions[uid]["exp"] = t; s["step"] = "confirm"; d = temp_questions[uid]
         await update.message.reply_text(f"پیش‌نمایش:\n{d['q']}\nA) {d['a']}\nB) {d['b']}\nC) {d['c']}\nD) {d['d']}\n✅ {d['correct']}\n📝 {d['exp']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ تایید", callback_data="save_q")], [InlineKeyboardButton("❌ لغو", callback_data="admin_panel")]]))
 
-# ========== اجرا ==========
+async def set_new_perm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    uid = q.from_user.id
+    if uid not in admin_state: return
+    p = q.data.replace("set_new_perm_", "")
+    perms = admin_state[uid]["new_perms"]
+    if p in perms: perms.remove(p)
+    else: perms.append(p)
+    
+    kb = []
+    for perm, label in [("manage_tests", "مدیریت تست‌ها"), ("manage_admins", "مدیریت ادمین‌ها"), ("manage_students", "مدیریت دانش‌آموزان"), ("manage_channels", "مدیریت کانال‌ها"), ("manage_broadcast", "ارسال خودکار"), ("manage_countdown", "شمارش معکوس")]:
+        icon = "✅" if perm in perms else "❌"
+        kb.append([InlineKeyboardButton(f"{icon} {label}", callback_data=f"set_new_perm_{perm}")])
+    kb.append([InlineKeyboardButton("✅ ثبت ادمین", callback_data="confirm_new_admin")])
+    await q.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
+
+async def confirm_new_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    uid = q.from_user.id
+    if uid not in admin_state: return
+    s = admin_state[uid]
+    new_id = s["new_admin_id"]
+    perms = s.get("new_perms", [])
+    new_perms = ",".join(perms)
+    
+    cur.execute("INSERT OR REPLACE INTO admins VALUES (?, ?)", (new_id, new_perms))
+    conn.commit()
+    del admin_state[uid]
+    await q.edit_message_text(f"✅ ادمین {new_id} با موفقیت اضافه شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
+
 def main():
     threading.Thread(target=run_web_server, daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -446,6 +487,8 @@ def main():
     app.add_handler(CallbackQueryHandler(manage_join, pattern="^manage_join$"))
     app.add_handler(CallbackQueryHandler(add_join_channel_start, pattern="^add_join_channel$"))
     app.add_handler(CallbackQueryHandler(set_countdown_start, pattern="^set_countdown$"))
+    app.add_handler(CallbackQueryHandler(set_new_perm, pattern="^set_new_perm_"))
+    app.add_handler(CallbackQueryHandler(confirm_new_admin, pattern="^confirm_new_admin$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     app.run_polling()
