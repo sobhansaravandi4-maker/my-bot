@@ -1,7 +1,6 @@
 import sqlite3
 import datetime
 import os
-import asyncio
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,8 +11,11 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
 
 ADMIN_IDS = [8818126928] 
+
+# این لیست حالا از دیتابیس خونده میشه، این فقط مقدار اولیه است
 CHANNELS = [
     {"name": "آکادمی سراوندی", "link": "https://t.me/akademi_saravandi", "chat_id": "@akademi_saravandi"},
+    {"name": "گروه آکادمی", "link": "https://t.me/Gakademi_saravandi", "chat_id": "@Gakademi_saravandi"}
 ]
 
 admin_state = {}
@@ -23,7 +25,6 @@ temp_questions = {}
 ROUTINES = {
     "arabic": "درک مطلب عربی",
     "gharabat": "قرابت معنایی",
-    "weight": "اختیار وزنی و زبانی",
     "samii": "سماعی"
 }
 
@@ -34,16 +35,30 @@ cur.execute("CREATE TABLE IF NOT EXISTS attempts (user_id INTEGER, routine TEXT,
 cur.execute("CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY AUTOINCREMENT, routine TEXT, q TEXT, a TEXT, b TEXT, c TEXT, d TEXT, correct TEXT, explanation TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
 cur.execute("CREATE TABLE IF NOT EXISTS countdown (chat_id TEXT, target_date TEXT, channel_msg TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS join_channels (name TEXT, link TEXT, chat_id TEXT)")
 conn.commit()
+
+# پر کردن اولیه دیتابیس کانال‌ها اگر خالی بود
+cur.execute("SELECT COUNT(*) FROM join_channels")
+if cur.fetchone()[0] == 0:
+    for ch in CHANNELS:
+        cur.execute("INSERT INTO join_channels VALUES (?, ?, ?)", (ch["name"], ch["link"], ch["chat_id"]))
+    conn.commit()
+
+def get_join_channels():
+    return cur.execute("SELECT name, link, chat_id FROM join_channels").fetchall()
 
 def is_admin(user_id):
     return user_id in ADMIN_IDS or cur.execute("SELECT 1 FROM admins WHERE user_id=?", (user_id,)).fetchone()
 
 async def check_membership(user_id, context):
-    for ch in CHANNELS:
+    channels = get_join_channels()
+    for name, link, chat_id in channels:
         try:
-            if (await context.bot.get_chat_member(ch["chat_id"], user_id)).status not in ["member", "administrator", "creator"]: return False
-        except: return False
+            if (await context.bot.get_chat_member(chat_id, user_id)).status not in ["member", "administrator", "creator"]: 
+                return False
+        except: 
+            return False
     return True
 
 # ========== وب‌سرور برای بیدار موندن ==========
@@ -76,14 +91,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     admin_state.pop(uid, None)
     if not await check_membership(uid, context):
-        kb = [[InlineKeyboardButton(f"📢 {ch['name']}", url=ch["link"])] for ch in CHANNELS] + [[InlineKeyboardButton("✅ تایید", callback_data="check_join")]]
-        await update.message.reply_text("⚠️ عضو شوید:", reply_markup=InlineKeyboardMarkup(kb))
+        channels = get_join_channels()
+        kb = [[InlineKeyboardButton(f"📢 {ch[0]}", url=ch[1])] for ch in channels] + [[InlineKeyboardButton("✅ تایید", callback_data="check_join")]]
+        await update.message.reply_text("⚠️ برای استفاده از ربات، ابتدا در کانال و گروه زیر عضو شوید:", reply_markup=InlineKeyboardMarkup(kb))
         return
     await show_main_menu(update, context)
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
-    kb = [[InlineKeyboardButton("🌙 درک مطلب", callback_data="routine_arabic")], [InlineKeyboardButton("🌙 قرابت", callback_data="routine_gharabat")], [InlineKeyboardButton("🌙 اختیار وزنی", callback_data="routine_weight")], [InlineKeyboardButton("🌙 سماعی", callback_data="routine_samii")]]
+    kb = [
+        [InlineKeyboardButton("🌙 درک مطلب", callback_data="routine_arabic")], 
+        [InlineKeyboardButton("🌙 قرابت", callback_data="routine_gharabat")], 
+        [InlineKeyboardButton("🌙 سماعی", callback_data="routine_samii")]
+    ]
     if is_admin(uid): kb.append([InlineKeyboardButton("⚙️ پنل مدیریت", callback_data="admin_panel")])
     if update.callback_query: await update.callback_query.edit_message_text("منو:", reply_markup=InlineKeyboardMarkup(kb))
     else: await update.message.reply_text("منو:", reply_markup=InlineKeyboardMarkup(kb))
@@ -92,7 +112,7 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_membership(update.callback_query.from_user.id, context):
         await update.callback_query.message.delete()
         await show_main_menu(update, context)
-    else: await update.callback_query.answer("❌ عضو نیستی!", show_alert=True)
+    else: await update.callback_query.answer("❌ هنوز در همه موارد عضو نشدی!", show_alert=True)
 
 async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_state.pop(update.callback_query.from_user.id, None)
@@ -138,18 +158,26 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
         [InlineKeyboardButton("➕ تست جدید (درک مطلب)", callback_data="addq_arabic")],
         [InlineKeyboardButton("➕ تست جدید (قرابت معنایی)", callback_data="addq_gharabat")],
-        [InlineKeyboardButton("➕ تست جدید (اختیار وزنی)", callback_data="addq_weight")],
         [InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_samii")],
         [InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")],
         [InlineKeyboardButton("👤 افزودن ادمین", callback_data="add_admin")],
+        [InlineKeyboardButton("🔗 مدیریت دکمه‌های ورودی", callback_data="manage_join")],
         [InlineKeyboardButton("⏱ شمارش معکوس", callback_data="set_countdown")],
         [InlineKeyboardButton("🔙", callback_data="back_menu")]
     ]
     await q.edit_message_text("⚙️ پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
+async def manage_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    kb = [
+        [InlineKeyboardButton("➕ افزودن کانال/گروه جدید", callback_data="add_join_channel")],
+        [InlineKeyboardButton("🔙", callback_data="admin_panel")]
+    ]
+    await q.edit_message_text("مدیریت کانال‌ها و گروه‌هایی که کاربر باید عضو شود:", reply_markup=InlineKeyboardMarkup(kb))
+
 async def manage_q(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    kb = [[InlineKeyboardButton("درک مطلب", callback_data="delq_arabic"), InlineKeyboardButton("قرابت", callback_data="delq_gharabat")], [InlineKeyboardButton("وزنی", callback_data="delq_weight"), InlineKeyboardButton("سماعی", callback_data="delq_samii")], [InlineKeyboardButton("🔙", callback_data="admin_panel")]]
+    kb = [[InlineKeyboardButton("درک مطلب", callback_data="delq_arabic"), InlineKeyboardButton("قرابت", callback_data="delq_gharabat"), InlineKeyboardButton("سماعی", callback_data="delq_samii")], [InlineKeyboardButton("🔙", callback_data="admin_panel")]]
     await q.edit_message_text("بخش:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def delete_q_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -166,6 +194,10 @@ async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_state[update.callback_query.from_user.id] = {"step": "add_admin"}
     await update.callback_query.edit_message_text("آیدی عددی ادمین جدید:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
+async def add_join_channel_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_state[update.callback_query.from_user.id] = {"step": "join_name"}
+    await update.callback_query.edit_message_text("۱. یک اسم برای این دکمه بفرست (مثلاً: گروه پشتیبانی):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]))
+
 async def set_countdown_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_state[update.callback_query.from_user.id] = {"step": "cd_chat"}
     await update.callback_query.edit_message_text("آیدی کانال:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
@@ -174,9 +206,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in admin_state: return
     s = admin_state[uid]; step = s["step"]; t = update.message.text
+    
     if step == "add_admin":
         try: cur.execute("INSERT OR IGNORE INTO admins VALUES (?)", (int(t),)); conn.commit(); await update.message.reply_text("✅ ادمین اضافه شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]])); del admin_state[uid]
         except: await update.message.reply_text("❌ عدد بفرست:")
+    
+    elif step == "join_name":
+        s["name"] = t
+        s["step"] = "join_link"
+        await update.message.reply_text("۲. لینک دعوت (مثلاً https://t.me/your_channel):")
+    
+    elif step == "join_link":
+        s["link"] = t
+        s["step"] = "join_id"
+        await update.message.reply_text("۳. آیدی عددی یا یوزرنیم (برای چک کردن عضویت، مثلاً @your_channel):")
+    
+    elif step == "join_id":
+        cur.execute("INSERT INTO join_channels VALUES (?, ?, ?)", (s["name"], s["link"], t))
+        conn.commit()
+        await update.message.reply_text("✅ دکمه ورودی جدید اضافه شد! از این به بعد همه کاربران باید در این هم عضو شوند.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
+        del admin_state[uid]
+
     elif step == "cd_chat": s["chat_id"] = t; s["step"] = "cd_date"; await update.message.reply_text("تاریخ (YYYY-MM-DD):")
     elif step == "cd_date": s["target_date"] = t; s["step"] = "cd_msg"; await update.message.reply_text("متن (جای روزها {days}):")
     elif step == "cd_msg": cur.execute("INSERT INTO countdown VALUES (?,?,?)", (s["chat_id"], s["target_date"], t)); conn.commit(); await update.message.reply_text("✅ تنظیم شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]])); del admin_state[uid]
@@ -222,6 +272,8 @@ def main():
     app.add_handler(CallbackQueryHandler(delete_q_list, pattern="^delq_"))
     app.add_handler(CallbackQueryHandler(delete_question, pattern="^del_q_"))
     app.add_handler(CallbackQueryHandler(add_admin_start, pattern="^add_admin$"))
+    app.add_handler(CallbackQueryHandler(manage_join, pattern="^manage_join$"))
+    app.add_handler(CallbackQueryHandler(add_join_channel_start, pattern="^add_join_channel$"))
     app.add_handler(CallbackQueryHandler(set_countdown_start, pattern="^set_countdown$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
