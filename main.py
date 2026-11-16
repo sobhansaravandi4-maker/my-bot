@@ -246,8 +246,6 @@ async def process_anon_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     del admin_state[uid]
     
     await update.message.reply_text("✅ پیام شما به صورت ناشناس برای ادمین ارسال شد.")
-    
-    # ارسال به همه ادمین‌ها
     for adm in get_all_admins():
         try: await context.bot.send_message(adm, f"📩 پیام ناشناس جدید:\n\n{msg_text}")
         except: pass
