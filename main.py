@@ -107,28 +107,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     admin_state.pop(uid, None)
     
-    # ۱. ادمین‌ها بدون هیچ شرطی میان تو
     if is_admin(uid):
         cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'approved', ?)", (uid, update.effective_user.full_name))
         conn.commit()
         await show_main_menu(update, context)
         return
 
-    # ۲. چک عضویت
     if not await check_membership(uid, context):
         kb = [[InlineKeyboardButton(f"📢 {ch[0]}", url=ch[1])] for ch in get_join_channels()] + [[InlineKeyboardButton("✅ عضو شدم", callback_data="check_join")]]
         await update.message.reply_text("⚠️ ابتدا در کانال و گروه زیر عضو شوید:", reply_markup=InlineKeyboardMarkup(kb))
         return
 
-    # ۳. کاربر عادی
     status = get_user_status(uid)
     if status == "approved":
         await show_main_menu(update, context)
     else:
-        # هر بار که /start بزنه، درخواست میره (حتی اگه قبلا رد شده باشه)
         cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, update.effective_user.full_name))
         conn.commit()
-        await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد.")
+        await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد. منتظر تایید باشید.")
         
         kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
         username = f"@{update.effective_user.username}" if update.effective_user.username else update.effective_user.full_name
@@ -158,7 +154,6 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     if await check_membership(uid, context):
         await q.message.delete()
-        # دوباره تابع استارت رو صدا می‌زنیم تا کل منطق اجرا بشه
         await start(update, context)
     else:
         await q.answer("❌ هنوز عضو نشدی!", show_alert=True)
@@ -249,7 +244,6 @@ async def process_anon_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await context.bot.send_message(adm, f"📩 پیام ناشناس:\n\n{msg_text}")
         except: pass
 
-# ========== پنل مدیریت ==========
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
