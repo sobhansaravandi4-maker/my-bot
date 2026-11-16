@@ -214,7 +214,7 @@ async def routine_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     rows = cur.execute("SELECT id, q, a, b, c, d, correct, explanation FROM questions WHERE routine=? ORDER BY RANDOM() LIMIT 5", (r,)).fetchall()
     if not rows:
-        await q.edit_message_text("سوالی نیست.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
+        await q.edit_message_text("📭 هنوز هیچ سوالی برای این بخش ثبت نشده است. لطفاً بعداً مراجعه کنید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
         if uid in active_users: del active_users[uid]
         return
     user_states[uid] = {"r": r, "q": rows, "i": 0, "sc": 0, "ans": []}
