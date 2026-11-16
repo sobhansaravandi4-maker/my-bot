@@ -69,6 +69,7 @@ def has_perm(user_id, perm):
     if user_id in ADMIN_IDS: return True
     row = cur.execute("SELECT perms FROM admins WHERE user_id=?", (user_id,)).fetchone()
     return row and row[0] and perm in row[0].split(",")
+def is_auto_msg_on(): return cur.execute("SELECT value FROM settings WHERE key='auto_msg'").fetchone()[0] == "on"
 
 async def check_membership(user_id, context):
     for name, link, chat_id in get_join_channels():
@@ -78,6 +79,7 @@ async def check_membership(user_id, context):
     return True
 
 async def send_morning(context: ContextTypes.DEFAULT_TYPE):
+    if not is_auto_msg_on(): return
     msg = get_daily_message(True) + "\n\n" + get_todays_date_info()
     for name, link, chat_id in get_join_channels():
         try: await context.bot.send_message(chat_id=chat_id, text=msg)
@@ -87,6 +89,7 @@ async def send_morning(context: ContextTypes.DEFAULT_TYPE):
         except: pass
 
 async def send_night(context: ContextTypes.DEFAULT_TYPE):
+    if not is_auto_msg_on(): return
     msg = get_daily_message(False) + "\n\n" + get_todays_date_info()
     for name, link, chat_id in get_join_channels():
         try: await context.bot.send_message(chat_id=chat_id, text=msg)
@@ -124,7 +127,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, update.effective_user.full_name))
         conn.commit()
-        await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد.")
+        await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد. منتظر تایید باشید.")
         
         kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
         username = f"@{update.effective_user.username}" if update.effective_user.username else update.effective_user.full_name
@@ -244,6 +247,7 @@ async def process_anon_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await context.bot.send_message(adm, f"📩 پیام ناشناس:\n\n{msg_text}")
         except: pass
 
+# ========== پنل مدیریت ==========
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -258,43 +262,43 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_type_samii")],
             [InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")]
         ])
-    if has_perm(uid, "manage_admins"): kb.append([InlineKeyboardButton("👤 مدیریت ادمین‌ها", callback_data="manage_admins")])
-    if has_perm(uid, "manage_students"): kb.append([InlineKeyboardButton("🎓 مدیریت دانش‌آموزان", callback_data="manage_users")])
+    if has_perm(uid, "manage_admins"): 
+        kb.append([InlineKeyboardButton("👤 مدیریت ادمین‌ها", callback_data="manage_admins")])
+    if has_perm(uid, "manage_students"): 
+        kb.append([InlineKeyboardButton("🎓 مدیریت دانش‌آموزان", callback_data="manage_users")])
+    if has_perm(uid, "manage_channels"): 
+        kb.append([InlineKeyboardButton("🔗 مدیریت کانال‌ها", callback_data="manage_join")])
+    if has_perm(uid, "manage_broadcast"):
+        status = "روشن ✅" if is_auto_msg_on() else "خاموش ❌"
+        kb.append([InlineKeyboardButton(f"📢 ارسال خودکار صبح/شب: {status}", callback_data="toggle_auto_msg")])
+    if has_perm(uid, "manage_countdown"): 
+        kb.append([InlineKeyboardButton("⏱ شمارش معکوس", callback_data="set_countdown")])
+    
     kb.append([InlineKeyboardButton("🔙", callback_data="back_menu")])
     await q.edit_message_text("⚙️ پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
-async def add_question_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def toggle_auto_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    if not has_perm(q.from_user.id, "manage_tests"): return
-    routine = q.data.replace("addq_type_", "")
-    kb = [[InlineKeyboardButton("✍️ افزودن تکی", callback_data=f"single_{routine}")], [InlineKeyboardButton("📥 افزودن گروهی", callback_data=f"bulk_{routine}")], [InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]
-    await q.edit_message_text("چه نوع افزودنی؟", reply_markup=InlineKeyboardMarkup(kb))
+    if not has_perm(q.from_user.id, "manage_broadcast"): return
+    new_status = "off" if is_auto_msg_on() else "on"
+    cur.execute("UPDATE settings SET value=? WHERE key='auto_msg'", (new_status,)); conn.commit()
+    await admin_panel(update, context)
 
-async def add_single_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def manage_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    routine = q.data.replace("single_", "")
-    admin_state[q.from_user.id] = {"routine": routine, "step": "q"}
-    await q.edit_message_text("مرحله ۱: صورت سوال:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="admin_panel")]]))
+    if not has_perm(q.from_user.id, "manage_channels"): return
+    kb = [[InlineKeyboardButton("➕ افزودن کانال/گروه جدید", callback_data="add_join_channel")], [InlineKeyboardButton("🔙", callback_data="admin_panel")]]
+    await q.edit_message_text("مدیریت کانال‌ها:", reply_markup=InlineKeyboardMarkup(kb))
 
-async def add_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    routine = q.data.replace("bulk_", "")
-    admin_state[q.from_user.id] = {"routine": routine, "step": "bulk_text"}
-    template = "لطفاً تست‌ها را با قالب ### بفرستید:\n\n###\nصورت سوال\nA\nB\nC\nD\nگزینه صحیح\nپاسخ"
-    await q.edit_message_text(template, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]))
+async def add_join_channel_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not has_perm(update.callback_query.from_user.id, "manage_channels"): return
+    admin_state[update.callback_query.from_user.id] = {"step": "join_name"}
+    await update.callback_query.edit_message_text("۱. اسم دکمه:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]))
 
-async def process_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid not in admin_state or admin_state[uid]["step"] != "bulk_text": return
-    routine = admin_state[uid]["routine"]; text = update.message.text
-    saved_count = 0
-    for block in text.split("###"):
-        lines = [line.strip() for line in block.strip().split('\n') if line.strip()]
-        if len(lines) >= 7 and lines[5].upper() in ["A", "B", "C", "D"]:
-            cur.execute("INSERT INTO questions (routine, q, a, b, c, d, correct, explanation) VALUES (?,?,?,?,?,?,?,?)", (routine, lines[0], lines[1], lines[2], lines[3], lines[4], lines[5].upper(), "\n".join(lines[6:])))
-            saved_count += 1
-    conn.commit(); del admin_state[uid]
-    await update.message.reply_text(f"✅ {saved_count} تست ذخیره شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
+async def set_countdown_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not has_perm(update.callback_query.from_user.id, "manage_countdown"): return
+    admin_state[update.callback_query.from_user.id] = {"step": "cd_chat"}
+    await update.callback_query.edit_message_text("آیدی کانال:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
@@ -319,7 +323,7 @@ async def edit_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row = cur.execute("SELECT perms FROM admins WHERE user_id=?", (uid,)).fetchone()
     perms = row[0].split(",") if row and row[0] else []
     kb = []
-    for p, label in [("manage_tests", "تست‌ها"), ("manage_admins", "ادمین‌ها"), ("manage_students", "دانش‌آموزان")]:
+    for p, label in [("manage_tests", "تست‌ها"), ("manage_admins", "ادمین‌ها"), ("manage_students", "دانش‌آموزان"), ("manage_channels", "کانال‌ها"), ("manage_broadcast", "ارسال خودکار"), ("manage_countdown", "شمارش معکوس")]:
         kb.append([InlineKeyboardButton(f"{'✅' if p in perms else '❌'} {label}", callback_data=f"toggle_perm_{uid}_{p}")])
     kb.append([InlineKeyboardButton("❌ حذف ادمین", callback_data=f"deladmin_{uid}")])
     kb.append([InlineKeyboardButton("🔙", callback_data="list_admins")])
@@ -374,6 +378,39 @@ async def delete_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("DELETE FROM questions WHERE id=?", (int(q.data.replace("del_q_", "")),)); conn.commit()
     await q.edit_message_text("✅ حذف شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_q")]]))
 
+async def add_question_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    if not has_perm(q.from_user.id, "manage_tests"): return
+    routine = q.data.replace("addq_type_", "")
+    kb = [[InlineKeyboardButton("✍️ افزودن تکی", callback_data=f"single_{routine}")], [InlineKeyboardButton("📥 افزودن گروهی", callback_data=f"bulk_{routine}")], [InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]
+    await q.edit_message_text("چه نوع افزودنی؟", reply_markup=InlineKeyboardMarkup(kb))
+
+async def add_single_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    routine = q.data.replace("single_", "")
+    admin_state[q.from_user.id] = {"routine": routine, "step": "q"}
+    await q.edit_message_text("مرحله ۱: صورت سوال:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="admin_panel")]]))
+
+async def add_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    routine = q.data.replace("bulk_", "")
+    admin_state[q.from_user.id] = {"routine": routine, "step": "bulk_text"}
+    template = "لطفاً تست‌ها را با قالب ### بفرستید:\n\n###\nصورت سوال\nA\nB\nC\nD\nگزینه صحیح\nپاسخ"
+    await q.edit_message_text(template, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]))
+
+async def process_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in admin_state or admin_state[uid]["step"] != "bulk_text": return
+    routine = admin_state[uid]["routine"]; text = update.message.text
+    saved_count = 0
+    for block in text.split("###"):
+        lines = [line.strip() for line in block.strip().split('\n') if line.strip()]
+        if len(lines) >= 7 and lines[5].upper() in ["A", "B", "C", "D"]:
+            cur.execute("INSERT INTO questions (routine, q, a, b, c, d, correct, explanation) VALUES (?,?,?,?,?,?,?,?)", (routine, lines[0], lines[1], lines[2], lines[3], lines[4], lines[5].upper(), "\n".join(lines[6:])))
+            saved_count += 1
+    conn.commit(); del admin_state[uid]
+    await update.message.reply_text(f"✅ {saved_count} تست ذخیره شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
+
 async def set_correct(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     temp_questions[q.from_user.id]["correct"] = q.data.replace("setcor_", "")
@@ -393,8 +430,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == "anon_msg": await process_anon_msg(update, context); return
     if step == "bulk_text": await process_bulk_text(update, context); return
     if step == "add_admin_id":
-        try: cur.execute("INSERT OR IGNORE INTO admins VALUES (?, 'manage_tests,manage_admins,manage_students')", (int(t),)); conn.commit(); await update.message.reply_text("✅ ادمین شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]])); del admin_state[uid]
+        try: cur.execute("INSERT OR IGNORE INTO admins VALUES (?, 'manage_tests,manage_admins,manage_students,manage_channels,manage_broadcast,manage_countdown')", (int(t),)); conn.commit(); await update.message.reply_text("✅ ادمین شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]])); del admin_state[uid]
         except: await update.message.reply_text("❌ عدد بفرست:")
+    elif step == "join_name": s["name"] = t; s["step"] = "join_link"; await update.message.reply_text("۲. لینک:")
+    elif step == "join_link": s["link"] = t; s["step"] = "join_id"; await update.message.reply_text("۳. آیدی:")
+    elif step == "join_id": cur.execute("INSERT INTO join_channels VALUES (?, ?, ?)", (s["name"], s["link"], t)); conn.commit(); await update.message.reply_text("✅ اضافه شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]])); del admin_state[uid]
+    elif step == "cd_chat": s["chat_id"] = t; s["step"] = "cd_date"; await update.message.reply_text("تاریخ (YYYY-MM-DD):")
+    elif step == "cd_date": s["target_date"] = t; s["step"] = "cd_msg"; await update.message.reply_text("متن (با {days}):")
+    elif step == "cd_msg": cur.execute("INSERT INTO countdown VALUES (?,?,?)", (s["chat_id"], s["target_date"], t)); conn.commit(); await update.message.reply_text("✅ تنظیم شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]])); del admin_state[uid]
     elif step == "q": temp_questions.setdefault(uid, {})["q"] = t; s["step"] = "a"; await update.message.reply_text("گزینه A:")
     elif step == "a": temp_questions[uid]["a"] = t; s["step"] = "b"; await update.message.reply_text("گزینه B:")
     elif step == "b": temp_questions[uid]["b"] = t; s["step"] = "c"; await update.message.reply_text("گزینه C:")
@@ -434,6 +477,10 @@ def main():
     app.add_handler(CallbackQueryHandler(manage_q, pattern="^manage_q$"))
     app.add_handler(CallbackQueryHandler(delete_q_list, pattern="^delq_"))
     app.add_handler(CallbackQueryHandler(delete_question, pattern="^del_q_"))
+    app.add_handler(CallbackQueryHandler(toggle_auto_msg, pattern="^toggle_auto_msg$"))
+    app.add_handler(CallbackQueryHandler(manage_join, pattern="^manage_join$"))
+    app.add_handler(CallbackQueryHandler(add_join_channel_start, pattern="^add_join_channel$"))
+    app.add_handler(CallbackQueryHandler(set_countdown_start, pattern="^set_countdown$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling()
 
