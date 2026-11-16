@@ -328,7 +328,6 @@ async def process_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     del admin_state[uid]
     await update.message.reply_text(f"✅ تعداد {saved_count} تست با موفقیت ذخیره شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
-# بقیه توابع دقیقا مثل قبل
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
