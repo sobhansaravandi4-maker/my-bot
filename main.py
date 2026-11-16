@@ -1,6 +1,7 @@
 import sqlite3
 import datetime
 import os
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 import jdatetime
@@ -12,6 +13,10 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
 ADMIN_IDS = [8818126928] 
 
+# ====== تنظیمات ظرفیت ======
+MAX_CONCURRENT_USERS = 50
+active_users = {} 
+
 CHANNELS = [
     {"name": "آکادمی سراوندی", "link": "https://t.me/akademi_saravandi", "chat_id": "@akademi_saravandi"},
     {"name": "گروه آکادمی", "link": "https://t.me/Gakademi_saravandi", "chat_id": "@Gakademi_saravandi"}
@@ -20,65 +25,26 @@ CHANNELS = [
 admin_state, user_states, temp_questions = {}, {}, {}
 ROUTINES = {"arabic": "درک مطلب عربی", "gharabat": "قرابت معنایی", "samii": "سماعی"}
 
-# ========== جملات انگیزشی ==========
-MORNING_MSGS = [
-    "صبح بخیر! امروز یک صفحه سفید جدید از زندگی توست. با انرژی شروع کن.", "صبح بخیر! موفقیت از لحظه‌ای شروع می‌شه که تصمیم بگیری تغییر کنی.",
-    "صبح بخیر! تو قوی‌تر از اون چیزی هستی که فکر می‌کنی.", "صبح بخیر! هر روز یک فرصت جدید برای بهتر شدن است.",
-    "صبح بخیر! با لبخند شروع کن، دنیا هم به روی تو لبخند می‌زند.", "صبح بخیر! امروز بهترین روز برای شروع یک عادت خوب است.",
-    "صبح بخیر! هر قدم کوچک، تو رو به هدفت نزدیک‌تر می‌کنه.", "صبح بخیر! باور داشته باش که می‌تونی، پس می‌تونی.",
-    "صبح بخیر! انرژی مثبتت رو امروز با همه تقسیم کن.", "صبح بخیر! رویاهای بزرگ، با قدم‌های کوچک محقق می‌شن.",
-    "صبح بخیر! با تمرکز روی هدف، مسیر برات هموار می‌شه.", "صبح بخیر! از شکست‌های دیروز، پله‌های موفقیت امروز رو بساز.",
-    "صبح بخیر! بهترین سرمایه‌ات زمان توست، امروز هدرش نده.", "صبح بخیر! با امید بیدار شو، امروز روز توست.",
-    "صبح بخیر! خودت رو باور داشته باش، تو لایق بهترین‌ها هستی.", "صبح بخیر! یک صبح عالی با یه ذهن آرام و هدفمند آغاز می‌شه.",
-    "صبح بخیر! هر روز فرصتی برای یادگیری چیزهای تازه است.", "صبح بخیر! امروز فقط روی کارهایی تمرکز کن که ارزشمندند.",
-    "صبح بخیر! لبخند بزن، چون انرژی خوب جذب می‌کنه.", "صبح بخیر! تو همانی که فکرش را می‌کنی، پس زیبا فکر کن.",
-    "صبح بخیر! با انگیزه شروع کن، پایانش شیرین خواهد بود.", "صبح بخیر! امروز فرصتی برای درخشیدن است.",
-    "صبح بخیر! با برنامه‌ریزی، روزت رو فوق‌العاده کن.", "صبح بخیر! مثبت باش تا زندگی هم مثبت بشه.",
-    "صبح بخیر! خودت رو دوست داشته باش و به خودت افتخار کن.", "صبح بخیر! با یه نفس عمیق، روز جدید رو شروع کن.",
-    "صبح بخیر! تمام تلاشت رو بکن، نتیجه رو بسپار به خدا.", "صبح بخیر! هر صبح یک هدیه است.",
-    "صبح بخیر! به خودت ایمان داشته باش.", "صبح بخیر! امروز روز توست، پس بهترین باش."
-]
-
-NIGHT_MSGS = [
-    "شب بخیر! امروز هر کاری کردی، تلاشت ارزشمند بود. استراحت کن.", "شب بخیر! فردا یک روز جدید و پر از فرصت‌های تازه است.",
-    "شب بخیر! با خیال راحت بخواب، چون امروز بهترین تلاشت رو کردی.", "شب بخیر! آرامش شب، انرژی فردا رو بهت می‌ده.",
-    "شب بخیر! از خودت و کارهای امروزت راضی باش.", "شب بخیر! با یه ذهن آرام، به خواب برو.",
-    "شب بخیر! فردا روز درخشیدن توست.", "شب بخیر! از امروز درس بگیر و فردا بهتر باش.",
-    "شب بخیر! رویاهای قشنگ ببین.", "شب بخیر! به خودت افتخار کن که تا اینجا اومدی.",
-    "شب بخیر! با لبخند بخواب تا با لبخند بیدار شی.", "شب بخیر! شب‌ها برای استراحت و بازیابی انرژی هستن.",
-    "شب بخیر! فردا با انرژی مضاعف شروع کن.", "شب بخیر! آرامش رو در خودت پیدا کن.",
-    "شب بخیر! به هدفت فکر کن و با انگیزه بخواب.", "شب بخیر! خودت رو ببخش و رها کن.",
-    "شب بخیر! با شکرگزاری به خواب برو.", "شب بخیر! فردا روز بزرگی خواهد بود.",
-    "شب بخیر! از لحظه‌های امروز لذت ببر.", "شب بخیر! با یه نفس عمیق آرام بگیر.",
-    "شب بخیر! خواب خوب، کلید موفقیت فرداست.", "شب بخیر! به خودت ایمان داشته باش.",
-    "شب بخیر! رویاهای بزرگ ببین.", "شب بخیر! فردا فرصت جدیدی برای بهتر شدنه.",
-    "شب بخیر! با امید بخواب.", "شب بخیر! انرژی مثبت رو در خودت نگه دار.",
-    "شب بخیر! امروز تموم شد، فردا بهتره.", "شب بخیر! با آرامش به خواب برو.",
-    "شب بخیر! از خودت مراقبت کن.", "شب بخیر! فردا روز توست."
-]
+MORNING_MSGS = ["صبح بخیر! امروز یک صفحه سفید جدید از زندگی توست. با انرژی شروع کن.", "صبح بخیر! موفقیت از لحظه‌ای شروع می‌شه که تصمیم بگیری تغییر کنی.", "صبح بخیر! تو قوی‌تر از اون چیزی هستی که فکر می‌کنی.", "صبح بخیر! هر روز یک فرصت جدید برای بهتر شدن است.", "صبح بخیر! با لبخند شروع کن، دنیا هم به روی تو لبخند می‌زند."]
+NIGHT_MSGS = ["شب بخیر! امروز هر کاری کردی، تلاشت ارزشمند بود. استراحت کن.", "شب بخیر! فردا یک روز جدید و پر از فرصت‌های تازه است.", "شب بخیر! با خیال راحت بخواب، چون امروز بهترین تلاشت رو کردی.", "شب بخیر! آرامش شب، انرژی فردا رو بهت می‌ده.", "شب بخیر! از خودت و کارهای امروزت راضی باش."]
 
 def get_daily_message(morning=True):
     day_of_year = datetime.date.today().timetuple().tm_yday
-    idx = (day_of_year - 1) % 30
+    idx = (day_of_year - 1) % len(MORNING_MSGS)
     return MORNING_MSGS[idx] if morning else NIGHT_MSGS[idx]
 
 def get_todays_date_info():
     today = datetime.date.today()
     j_date = jdatetime.date.fromgregorian(date=today)
-    shamsi = j_date.strftime("%Y/%m/%d")
     h_date = hijri_converter.Gregorian(today.year, today.month, today.day).to_hijri()
-    ghamari = f"{h_date.year}/{h_date.month}/{h_date.day}"
-    miladi = today.strftime("%Y/%m/%d")
-    return f"📅 تاریخ شمسی: {shamsi}\n🌙 تاریخ قمری: {ghamari}\n🌍 تاریخ میلادی: {miladi}"
+    return f"📅 شمسی: {j_date.strftime('%Y/%m/%d')}\n🌙 قمری: {h_date.year}/{h_date.month}/{h_date.day}\n🌍 میلادی: {today.strftime('%Y/%m/%d')}"
 
-# ========== وب‌سرور ==========
 class WebServer(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"Bot is alive!")
     def do_HEAD(self): self.send_response(200); self.end_headers()
     def log_message(self, format, *args): pass
 def run_web_server(): HTTPServer(('0.0.0.0', PORT), WebServer).serve_forever()
 
-# ========== دیتابیس ==========
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cur = conn.cursor()
 cur.execute("CREATE TABLE IF NOT EXISTS attempts (user_id INTEGER, routine TEXT, used_at TEXT)")
@@ -93,7 +59,6 @@ conn.commit()
 if cur.execute("SELECT COUNT(*) FROM join_channels").fetchone()[0] == 0:
     for ch in CHANNELS: cur.execute("INSERT INTO join_channels VALUES (?, ?, ?)", (ch["name"], ch["link"], ch["chat_id"]))
     conn.commit()
-
 if cur.execute("SELECT COUNT(*) FROM settings WHERE key='auto_msg'").fetchone()[0] == 0:
     cur.execute("INSERT INTO settings VALUES ('auto_msg', 'on')")
     conn.commit()
@@ -104,15 +69,11 @@ def get_all_admins(): return list(set([ADMIN_IDS[0]] + [r[0] for r in cur.execut
 def get_user_status(user_id):
     row = cur.execute("SELECT status FROM users WHERE user_id=?", (user_id,)).fetchone()
     return row[0] if row else "none"
-
 def has_perm(user_id, perm):
     if user_id in ADMIN_IDS: return True
     row = cur.execute("SELECT perms FROM admins WHERE user_id=?", (user_id,)).fetchone()
-    if not row or not row[0]: return False
-    return perm in row[0].split(",")
-
-def is_auto_msg_on():
-    return cur.execute("SELECT value FROM settings WHERE key='auto_msg'").fetchone()[0] == "on"
+    return row and row[0] and perm in row[0].split(",")
+def is_auto_msg_on(): return cur.execute("SELECT value FROM settings WHERE key='auto_msg'").fetchone()[0] == "on"
 
 async def check_membership(user_id, context):
     for name, link, chat_id in get_join_channels():
@@ -121,15 +82,19 @@ async def check_membership(user_id, context):
         except: return False
     return True
 
-# ========== جاب‌ها (پیام صبح و شب) ==========
+def clean_inactive_users():
+    while True:
+        now = time.time()
+        to_remove = [uid for uid, start_t in active_users.items() if now - start_t > 600]
+        for uid in to_remove: del active_users[uid]
+        time.sleep(60)
+
 async def send_morning(context: ContextTypes.DEFAULT_TYPE):
     if not is_auto_msg_on(): return
     msg = get_daily_message(True) + "\n\n" + get_todays_date_info()
-    
     for name, link, chat_id in get_join_channels():
         try: await context.bot.send_message(chat_id=chat_id, text=msg)
         except: pass
-
     for row in cur.execute("SELECT user_id FROM users WHERE status='approved'").fetchall():
         try: await context.bot.send_message(row[0], msg)
         except: pass
@@ -137,11 +102,9 @@ async def send_morning(context: ContextTypes.DEFAULT_TYPE):
 async def send_night(context: ContextTypes.DEFAULT_TYPE):
     if not is_auto_msg_on(): return
     msg = get_daily_message(False) + "\n\n" + get_todays_date_info()
-    
     for name, link, chat_id in get_join_channels():
         try: await context.bot.send_message(chat_id=chat_id, text=msg)
         except: pass
-
     for row in cur.execute("SELECT user_id FROM users WHERE status='approved'").fetchall():
         try: await context.bot.send_message(row[0], msg)
         except: pass
@@ -152,9 +115,8 @@ async def countdown_job(context: ContextTypes.DEFAULT_TYPE):
         try:
             d = (datetime.datetime.strptime(t_str, "%Y-%m-%d").date() - today).days
             if d >= 0: await context.bot.send_message(chat_id, msg.replace("{days}", str(d)))
-        except Exception as e: print(e)
+        except: pass
 
-# ========== منوها ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id; admin_state.pop(uid, None)
     if is_admin(uid): await show_main_menu(update, context); return
@@ -196,21 +158,33 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action, uid = q.data.split("_"); uid = int(uid)
     if action == "approve":
         cur.execute("UPDATE users SET status='approved' WHERE user_id=?", (uid,)); conn.commit()
-        await q.edit_message_text(f"✅ تایید شد.")
+        await q.edit_message_text("✅ تایید شد.")
         try: await context.bot.send_message(uid, "🎉 دسترسی شما تایید شد! /start بزنید.")
         except: pass
     elif action == "reject":
         cur.execute("UPDATE users SET status='none' WHERE user_id=?", (uid,)); conn.commit()
-        await q.edit_message_text(f"❌ رد شد. کاربر می‌تواند دوباره درخواست دهد.")
+        await q.edit_message_text("❌ رد شد.")
 
 async def routine_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer(); uid = q.from_user.id; r = q.data.replace("routine_", "")
     if not is_admin(uid) and get_user_status(uid) != "approved": await q.answer("⏳ تایید نشدی!", show_alert=True); return
+    
+    clean_inactive_users()
+    if not is_admin(uid) and uid not in active_users:
+        if len(active_users) >= MAX_CONCURRENT_USERS:
+            await q.answer("⚠️ ظرفیت ربات در حال حاضر تکمیل است. لطفاً چند دقیقه دیگر مراجعه کنید.", show_alert=True); return
+        active_users[uid] = time.time()
+
     row = cur.execute("SELECT used_at FROM attempts WHERE user_id=? AND routine=? ORDER BY used_at DESC LIMIT 1", (uid, r)).fetchone()
     if row and (datetime.datetime.now() - datetime.datetime.fromisoformat(row[0])) < datetime.timedelta(hours=12):
-        await q.edit_message_text("⏳ ۱۲ ساعت صبر کن.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]])); return
+        await q.edit_message_text("⏳ ۱۲ ساعت صبر کن.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
+        if uid in active_users: del active_users[uid]
+        return
     rows = cur.execute("SELECT id, q, a, b, c, d, correct, explanation FROM questions WHERE routine=? ORDER BY RANDOM() LIMIT 5", (r,)).fetchall()
-    if not rows: await q.edit_message_text("سوالی نیست.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]])); return
+    if not rows: 
+        await q.edit_message_text("سوالی نیست.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
+        if uid in active_users: del active_users[uid]
+        return
     user_states[uid] = {"r": r, "q": rows, "i": 0, "sc": 0, "ans": []}
     await ask_q(update, context, uid)
 
@@ -233,8 +207,10 @@ async def answer_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = f"✅ نمره: {s['sc']} از {len(s['q'])}\n\nپاسخنامه:\n"
         for i, a in enumerate(s["ans"]): txt += f"\n{'✅' if a['ua']==a['cor'] else '❌'} {i+1}: جواب {a['cor']}\n{a['ex']}\n"
         del user_states[uid]
+        if uid in active_users: del active_users[uid]
         await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
 
+# ====== پنل مدیریت ======
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not is_admin(q.from_user.id): return
@@ -242,21 +218,14 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     kb = []
     if has_perm(uid, "manage_tests"):
-        kb.append([InlineKeyboardButton("➕ تست جدید (درک مطلب)", callback_data="addq_arabic")])
-        kb.append([InlineKeyboardButton("➕ تست جدید (قرابت معنایی)", callback_data="addq_gharabat")])
-        kb.append([InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_samii")])
-        kb.append([InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")])
-    if has_perm(uid, "manage_admins"):
-        kb.append([InlineKeyboardButton("👤 مدیریت ادمین‌ها", callback_data="manage_admins")])
-    if has_perm(uid, "manage_students"):
-        kb.append([InlineKeyboardButton("🎓 مدیریت دانش‌آموزان", callback_data="manage_users")])
-    if has_perm(uid, "manage_channels"):
-        kb.append([InlineKeyboardButton("🔗 مدیریت کانال‌ها", callback_data="manage_join")])
+        kb.extend([[InlineKeyboardButton("➕ تست جدید (درک مطلب)", callback_data="addq_arabic")], [InlineKeyboardButton("➕ تست جدید (قرابت معنایی)", callback_data="addq_gharabat")], [InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_samii")], [InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")]])
+    if has_perm(uid, "manage_admins"): kb.append([InlineKeyboardButton("👤 مدیریت ادمین‌ها", callback_data="manage_admins")])
+    if has_perm(uid, "manage_students"): kb.append([InlineKeyboardButton("🎓 مدیریت دانش‌آموزان", callback_data="manage_users")])
+    if has_perm(uid, "manage_channels"): kb.append([InlineKeyboardButton("🔗 مدیریت کانال‌ها", callback_data="manage_join")])
     if has_perm(uid, "manage_broadcast"):
         status = "روشن ✅" if is_auto_msg_on() else "خاموش ❌"
         kb.append([InlineKeyboardButton(f"📢 ارسال خودکار صبح/شب: {status}", callback_data="toggle_auto_msg")])
-    if has_perm(uid, "manage_countdown"):
-        kb.append([InlineKeyboardButton("⏱ شمارش معکوس", callback_data="set_countdown")])
+    if has_perm(uid, "manage_countdown"): kb.append([InlineKeyboardButton("⏱ شمارش معکوس", callback_data="set_countdown")])
     kb.append([InlineKeyboardButton("🔙", callback_data="back_menu")])
     await q.edit_message_text("⚙️ پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -282,7 +251,6 @@ async def edit_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = int(q.data.replace("edit_admin_", ""))
     row = cur.execute("SELECT perms FROM admins WHERE user_id=?", (uid,)).fetchone()
     perms = row[0].split(",") if row and row[0] else []
-    
     kb = []
     for p, label in [("manage_tests", "مدیریت تست‌ها"), ("manage_admins", "مدیریت ادمین‌ها"), ("manage_students", "مدیریت دانش‌آموزان"), ("manage_channels", "مدیریت کانال‌ها"), ("manage_broadcast", "ارسال خودکار"), ("manage_countdown", "شمارش معکوس")]:
         icon = "✅" if p in perms else "❌"
@@ -297,10 +265,8 @@ async def toggle_perm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid, p = int(parts[2]), parts[3]
     row = cur.execute("SELECT perms FROM admins WHERE user_id=?", (uid,)).fetchone()
     perms = row[0].split(",") if row and row[0] else []
-    
     if p in perms: perms.remove(p)
     else: perms.append(p)
-    
     new_perms = ",".join(perms)
     cur.execute("UPDATE admins SET perms=? WHERE user_id=?", (new_perms, uid)); conn.commit()
     await edit_admin(update, context)
@@ -392,22 +358,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in admin_state: return
     s = admin_state[uid]; step = s["step"]; t = update.message.text
-    
     if step == "add_admin_id":
         try:
             new_id = int(t)
-            s["new_admin_id"] = new_id
-            s["step"] = "add_admin_perms"
-            s["new_perms"] = []
+            s["new_admin_id"] = new_id; s["step"] = "add_admin_perms"; s["new_perms"] = []
             kb = []
             for p, label in [("manage_tests", "مدیریت تست‌ها"), ("manage_admins", "مدیریت ادمین‌ها"), ("manage_students", "مدیریت دانش‌آموزان"), ("manage_channels", "مدیریت کانال‌ها"), ("manage_broadcast", "ارسال خودکار"), ("manage_countdown", "شمارش معکوس")]:
                 kb.append([InlineKeyboardButton(f"❌ {label}", callback_data=f"set_new_perm_{p}")])
             kb.append([InlineKeyboardButton("✅ ثبت ادمین", callback_data="confirm_new_admin")])
-            await update.message.reply_text("دسترسی‌های این ادمین را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(kb))
+            await update.message.reply_text("دسترسی‌ها را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(kb))
         except: await update.message.reply_text("❌ عدد بفرست:")
-    
     elif step == "join_name": s["name"] = t; s["step"] = "join_link"; await update.message.reply_text("۲. لینک:")
-    elif step == "join_link": s["link"] = t; s["step"] = "join_id"; await update.message.reply_text("۳. آیدی عددی یا @username:")
+    elif step == "join_link": s["link"] = t; s["step"] = "join_id"; await update.message.reply_text("۳. آیدی:")
     elif step == "join_id": cur.execute("INSERT INTO join_channels VALUES (?, ?, ?)", (s["name"], s["link"], t)); conn.commit(); await update.message.reply_text("✅ اضافه شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]])); del admin_state[uid]
     elif step == "cd_chat": s["chat_id"] = t; s["step"] = "cd_date"; await update.message.reply_text("تاریخ (YYYY-MM-DD):")
     elif step == "cd_date": s["target_date"] = t; s["step"] = "cd_msg"; await update.message.reply_text("متن (با {days}):")
@@ -429,7 +391,6 @@ async def set_new_perm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     perms = admin_state[uid]["new_perms"]
     if p in perms: perms.remove(p)
     else: perms.append(p)
-    
     kb = []
     for perm, label in [("manage_tests", "مدیریت تست‌ها"), ("manage_admins", "مدیریت ادمین‌ها"), ("manage_students", "مدیریت دانش‌آموزان"), ("manage_channels", "مدیریت کانال‌ها"), ("manage_broadcast", "ارسال خودکار"), ("manage_countdown", "شمارش معکوس")]:
         icon = "✅" if perm in perms else "❌"
@@ -442,26 +403,17 @@ async def confirm_new_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     if uid not in admin_state: return
     s = admin_state[uid]
-    new_id = s["new_admin_id"]
-    perms = s.get("new_perms", [])
-    new_perms = ",".join(perms)
-    
-    cur.execute("INSERT OR REPLACE INTO admins VALUES (?, ?)", (new_id, new_perms))
-    conn.commit()
+    cur.execute("INSERT OR REPLACE INTO admins VALUES (?, ?)", (s["new_admin_id"], ",".join(s.get("new_perms", [])))); conn.commit()
     del admin_state[uid]
-    await q.edit_message_text(f"✅ ادمین {new_id} با موفقیت اضافه شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
+    await q.edit_message_text(f"✅ ادمین {s['new_admin_id']} اضافه شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
-# ========== اجرا ==========
 def main():
     threading.Thread(target=run_web_server, daemon=True).start()
+    threading.Thread(target=clean_inactive_users, daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.job_queue.run_daily(countdown_job, time=datetime.time(hour=22, minute=0))
-    
-    # ساعت ۳:۳۰ صبح UTC = ۷ صبح ایران
     app.job_queue.run_daily(send_morning, time=datetime.time(hour=3, minute=30))
-    # ساعت ۱۸:۳۰ عصر UTC = ۱۰ شب ایران
     app.job_queue.run_daily(send_night, time=datetime.time(hour=18, minute=30))
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(check_join, pattern="^check_join$"))
     app.add_handler(CallbackQueryHandler(approve_user, pattern="^(approve|reject)_"))
@@ -490,7 +442,6 @@ def main():
     app.add_handler(CallbackQueryHandler(set_new_perm, pattern="^set_new_perm_"))
     app.add_handler(CallbackQueryHandler(confirm_new_admin, pattern="^confirm_new_admin$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
     app.run_polling()
 
 if __name__ == "__main__":
