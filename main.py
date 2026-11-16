@@ -2,6 +2,8 @@ import sqlite3
 import datetime
 import os
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 import jdatetime
 import hijri_converter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -33,6 +35,12 @@ def get_todays_date_info():
     h_date = hijri_converter.Gregorian(today.year, today.month, today.day).to_hijri()
     return f"📅 شمسی: {j_date.strftime('%Y/%m/%d')}\n🌙 قمری: {h_date.year}/{h_date.month}/{h_date.day}\n🌍 میلادی: {today.strftime('%Y/%m/%d')}"
 
+class WebServer(BaseHTTPRequestHandler):
+    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"Bot is alive!")
+    def do_HEAD(self): self.send_response(200); self.end_headers()
+    def log_message(self, format, *args): pass
+def run_web_server(): HTTPServer(('0.0.0.0', PORT), WebServer).serve_forever()
+
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cur = conn.cursor()
 cur.execute("CREATE TABLE IF NOT EXISTS attempts (user_id INTEGER, routine TEXT, used_at TEXT)")
@@ -61,7 +69,6 @@ def has_perm(user_id, perm):
     if user_id in ADMIN_IDS: return True
     row = cur.execute("SELECT perms FROM admins WHERE user_id=?", (user_id,)).fetchone()
     return row and row[0] and perm in row[0].split(",")
-def is_auto_msg_on(): return cur.execute("SELECT value FROM settings WHERE key='auto_msg'").fetchone()[0] == "on"
 
 async def check_membership(user_id, context):
     for name, link, chat_id in get_join_channels():
@@ -70,36 +77,65 @@ async def check_membership(user_id, context):
         except: return False
     return True
 
+async def send_morning(context: ContextTypes.DEFAULT_TYPE):
+    msg = get_daily_message(True) + "\n\n" + get_todays_date_info()
+    for name, link, chat_id in get_join_channels():
+        try: await context.bot.send_message(chat_id=chat_id, text=msg)
+        except: pass
+    for row in cur.execute("SELECT user_id FROM users WHERE status='approved'").fetchall():
+        try: await context.bot.send_message(row[0], msg)
+        except: pass
+
+async def send_night(context: ContextTypes.DEFAULT_TYPE):
+    msg = get_daily_message(False) + "\n\n" + get_todays_date_info()
+    for name, link, chat_id in get_join_channels():
+        try: await context.bot.send_message(chat_id=chat_id, text=msg)
+        except: pass
+    for row in cur.execute("SELECT user_id FROM users WHERE status='approved'").fetchall():
+        try: await context.bot.send_message(row[0], msg)
+        except: pass
+
+async def countdown_job(context: ContextTypes.DEFAULT_TYPE):
+    today = datetime.date.today()
+    for chat_id, t_str, msg in cur.execute("SELECT chat_id, target_date, channel_msg FROM countdown").fetchall():
+        try:
+            d = (datetime.datetime.strptime(t_str, "%Y-%m-%d").date() - today).days
+            if d >= 0: await context.bot.send_message(chat_id, msg.replace("{days}", str(d)))
+        except: pass
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     admin_state.pop(uid, None)
     
-    if uid in ADMIN_IDS:
+    # ۱. ادمین‌ها مستقیم بیان تو
+    if is_admin(uid):
         cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'approved', ?)", (uid, update.effective_user.full_name))
         conn.commit()
         await show_main_menu(update, context)
         return
-        
-    status = get_user_status(uid)
-    if status == "approved":
-        await show_main_menu(update, context)
-        return
 
+    # ۲. چک کردن عضویت
     if not await check_membership(uid, context):
         kb = [[InlineKeyboardButton(f"📢 {ch[0]}", url=ch[1])] for ch in get_join_channels()] + [[InlineKeyboardButton("✅ عضو شدم", callback_data="check_join")]]
         await update.message.reply_text("⚠️ ابتدا در کانال و گروه زیر عضو شوید:", reply_markup=InlineKeyboardMarkup(kb))
         return
 
-    cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, update.effective_user.full_name))
-    conn.commit()
-    await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد. منتظر تایید باشید.")
-    
-    kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
-    username = f"@{update.effective_user.username}" if update.effective_user.username else update.effective_user.full_name
-    
-    for adm in get_all_admins():
-        try: await context.bot.send_message(adm, f"👤 درخواست جدید:\nنام: {update.effective_user.full_name}\nیوزرنیم: {username}\nآیدی: `{uid}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-        except: pass
+    # ۳. کاربر عادی
+    status = get_user_status(uid)
+    if status == "approved":
+        await show_main_menu(update, context)
+    else:
+        # ثبت درخواست (چه جدید باشه چه قبلا رد شده باشه)
+        cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, update.effective_user.full_name))
+        conn.commit()
+        await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد. منتظر تایید باشید.")
+        
+        kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
+        username = f"@{update.effective_user.username}" if update.effective_user.username else update.effective_user.full_name
+        
+        for adm in get_all_admins():
+            try: await context.bot.send_message(adm, f"👤 درخواست جدید:\nنام: {update.effective_user.full_name}\nیوزرنیم: {username}\nآیدی: `{uid}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+            except: pass
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
@@ -111,6 +147,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if is_admin(uid):
         kb.append([InlineKeyboardButton("⚙️ پنل مدیریت", callback_data="admin_panel")])
+    
     if update.callback_query:
         await update.callback_query.edit_message_text("یک روتین انتخاب کن:", reply_markup=InlineKeyboardMarkup(kb))
     else:
@@ -121,6 +158,7 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     if await check_membership(uid, context):
         await q.message.delete()
+        # دوباره استارت رو صدا می‌زنیم تا منطق بررسی بشه
         await start(update, context)
     else:
         await q.answer("❌ هنوز عضو نشدی!", show_alert=True)
@@ -211,6 +249,7 @@ async def process_anon_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await context.bot.send_message(adm, f"📩 پیام ناشناس:\n\n{msg_text}")
         except: pass
 
+# ========== پنل مدیریت ==========
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -372,7 +411,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"پیش‌نمایش:\n{d['q']}\n✅ {d['correct']}\n📝 {d['exp']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ تایید", callback_data="save_q")], [InlineKeyboardButton("❌ لغو", callback_data="admin_panel")]]))
 
 def main():
+    threading.Thread(target=run_web_server, daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.job_queue.run_daily(countdown_job, time=datetime.time(hour=22, minute=0))
+    app.job_queue.run_daily(send_morning, time=datetime.time(hour=3, minute=30))
+    app.job_queue.run_daily(send_night, time=datetime.time(hour=18, minute=30))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(check_join, pattern="^check_join$"))
     app.add_handler(CallbackQueryHandler(approve_user, pattern="^(approve|reject)_"))
