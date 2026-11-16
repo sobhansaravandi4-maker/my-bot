@@ -2,6 +2,7 @@ import sqlite3
 import datetime
 import os
 import time
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 import jdatetime
@@ -13,7 +14,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
 ADMIN_IDS = [8818126928] 
 
-# ====== تنظیمات ظرفیت ======
 MAX_CONCURRENT_USERS = 50
 active_users = {} 
 
@@ -168,13 +168,11 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def routine_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer(); uid = q.from_user.id; r = q.data.replace("routine_", "")
     if not is_admin(uid) and get_user_status(uid) != "approved": await q.answer("⏳ تایید نشدی!", show_alert=True); return
-    
     clean_inactive_users()
     if not is_admin(uid) and uid not in active_users:
         if len(active_users) >= MAX_CONCURRENT_USERS:
             await q.answer("⚠️ ظرفیت ربات در حال حاضر تکمیل است. لطفاً چند دقیقه دیگر مراجعه کنید.", show_alert=True); return
         active_users[uid] = time.time()
-
     row = cur.execute("SELECT used_at FROM attempts WHERE user_id=? AND routine=? ORDER BY used_at DESC LIMIT 1", (uid, r)).fetchone()
     if row and (datetime.datetime.now() - datetime.datetime.fromisoformat(row[0])) < datetime.timedelta(hours=12):
         await q.edit_message_text("⏳ ۱۲ ساعت صبر کن.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
@@ -218,7 +216,13 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     kb = []
     if has_perm(uid, "manage_tests"):
-        kb.extend([[InlineKeyboardButton("➕ تست جدید (درک مطلب)", callback_data="addq_arabic")], [InlineKeyboardButton("➕ تست جدید (قرابت معنایی)", callback_data="addq_gharabat")], [InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_samii")], [InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")]])
+        kb.extend([
+            [InlineKeyboardButton("➕ تست جدید (درک مطلب)", callback_data="addq_arabic")],
+            [InlineKeyboardButton("➕ تست جدید (قرابت معنایی)", callback_data="addq_gharabat")],
+            [InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_samii")],
+            [InlineKeyboardButton("📥 افزودن چندتایی (گروهی)", callback_data="addq_bulk")],
+            [InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")]
+        ])
     if has_perm(uid, "manage_admins"): kb.append([InlineKeyboardButton("👤 مدیریت ادمین‌ها", callback_data="manage_admins")])
     if has_perm(uid, "manage_students"): kb.append([InlineKeyboardButton("🎓 مدیریت دانش‌آموزان", callback_data="manage_users")])
     if has_perm(uid, "manage_channels"): kb.append([InlineKeyboardButton("🔗 مدیریت کانال‌ها", callback_data="manage_join")])
@@ -229,6 +233,60 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb.append([InlineKeyboardButton("🔙", callback_data="back_menu")])
     await q.edit_message_text("⚙️ پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
+async def add_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    if not has_perm(q.from_user.id, "manage_tests"): return
+    admin_state[q.from_user.id] = {"step": "bulk_routine"}
+    kb = [
+        [InlineKeyboardButton("درک مطلب", callback_data="bulk_arabic"), InlineKeyboardButton("قرابت", callback_data="bulk_gharabat"), InlineKeyboardButton("سماعی", callback_data="bulk_samii")],
+        [InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]
+    ]
+    await q.edit_message_text("تست‌ها برای کدام بخش باشند؟", reply_markup=InlineKeyboardMarkup(kb))
+
+async def add_bulk_routine(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    uid = q.from_user.id
+    if uid not in admin_state: return
+    r = q.data.replace("bulk_", "")
+    admin_state[uid]["routine"] = r
+    admin_state[uid]["step"] = "bulk_text"
+    
+    template = (
+        "لطفاً تست‌ها را دقیقاً با این قالب بفرستید (هر تست با ### شروع می‌شود):\n\n"
+        "###\nصورت سوال\nگزینه A\nگزینه B\nگزینه C\nگزینه D\nگزینه صحیح (مثلا B)\nپاسخ تشریحی\n\n"
+        "###\nصورت سوال بعدی\n..."
+    )
+    kb = [[InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]
+    await q.edit_message_text(template, reply_markup=InlineKeyboardMarkup(kb))
+
+async def process_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in admin_state or admin_state[uid]["step"] != "bulk_text": return
+    
+    routine = admin_state[uid]["routine"]
+    text = update.message.text
+    raw_blocks = text.split("###")
+    saved_count = 0
+    
+    for block in raw_blocks:
+        block = block.strip()
+        if not block: continue
+        lines = [line.strip() for line in block.split('\n') if line.strip()]
+        if len(lines) >= 7:
+            q_text = lines[0]
+            a, b, c, d = lines[1], lines[2], lines[3], lines[4]
+            correct = lines[5].upper()
+            exp = "\n".join(lines[6:])
+            
+            if correct in ["A", "B", "C", "D"]:
+                cur.execute("INSERT INTO questions (routine, q, a, b, c, d, correct, explanation) VALUES (?,?,?,?,?,?,?,?)", (routine, q_text, a, b, c, d, correct, exp))
+                saved_count += 1
+    
+    conn.commit()
+    del admin_state[uid]
+    await update.message.reply_text(f"✅ تعداد {saved_count} تست با موفقیت ذخیره شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
+
+# ====== بقیه توابع ======
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not has_perm(q.from_user.id, "manage_admins"): return
@@ -358,6 +416,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in admin_state: return
     s = admin_state[uid]; step = s["step"]; t = update.message.text
+    
+    if step == "bulk_text":
+        await process_bulk_text(update, context)
+        return
+    
     if step == "add_admin_id":
         try:
             new_id = int(t)
@@ -430,6 +493,8 @@ def main():
     app.add_handler(CallbackQueryHandler(del_user, pattern="^deluser_"))
     app.add_handler(CallbackQueryHandler(toggle_auto_msg, pattern="^toggle_auto_msg$"))
     app.add_handler(CallbackQueryHandler(add_question_start, pattern="^addq_"))
+    app.add_handler(CallbackQueryHandler(add_bulk_start, pattern="^addq_bulk$"))
+    app.add_handler(CallbackQueryHandler(add_bulk_routine, pattern="^bulk_"))
     app.add_handler(CallbackQueryHandler(set_correct, pattern="^setcor_"))
     app.add_handler(CallbackQueryHandler(save_question, pattern="^save_q$"))
     app.add_handler(CallbackQueryHandler(back_menu, pattern="^back_menu$"))
