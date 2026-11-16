@@ -124,7 +124,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = get_user_status(uid)
     if status == "approved":
         await show_main_menu(update, context)
+    elif status == "pending":
+        await update.message.reply_text("⏳ درخواست شما در انتظار تایید است.")
     else:
+        # کاربر جدید
         cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, update.effective_user.full_name))
         conn.commit()
         await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد. منتظر تایید باشید.")
