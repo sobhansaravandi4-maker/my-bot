@@ -122,21 +122,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif status == "pending":
         await update.message.reply_text("⏳ درخواست شما قبلاً ارسال شده. منتظر تایید باشید.")
     else:
-        # ثبت خودکار کاربر جدید در وضعیت pending
-        cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, update.effective_user.full_name))
-        conn.commit()
-        await update.message.reply_text("✅ درخواست شما ارسال شد. منتظر تایید ادمین باشید.")
-        kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
-        for adm in get_all_admins():
-            try: await context.bot.send_message(adm, f"👤 درخواست جدید:\nنام: {update.effective_user.full_name}\nآیدی: `{uid}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-            except: pass
+        await update.message.reply_text("⚠️ برای ارسال درخواست، روی /start بزنید.")
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
     kb = [
         [InlineKeyboardButton("🌙 درک مطلب", callback_data="routine_arabic")],
         [InlineKeyboardButton("🌙 قرابت", callback_data="routine_gharabat")],
-        [InlineKeyboardButton("🌙 سماعی", callback_data="routine_samii")]
+        [InlineKeyboardButton("🌙 سماعی", callback_data="routine_samii")],
+        [InlineKeyboardButton("✉️ پیام ناشناس", callback_data="anon_msg")]
     ]
     if is_admin(uid):
         kb.append([InlineKeyboardButton("⚙️ پنل مدیریت", callback_data="admin_panel")])
@@ -161,13 +155,13 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         await q.message.reply_text("✅ درخواست شما ارسال شد. منتظر تایید ادمین باشید.")
         kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
+        username = f"@{q.from_user.username}" if q.from_user.username else q.from_user.full_name
         for adm in get_all_admins():
-            try: await context.bot.send_message(adm, f"👤 درخواست جدید:\nنام: {q.from_user.full_name}\nآیدی: `{uid}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+            try: await context.bot.send_message(adm, f"👤 درخواست جدید:\nنام: {q.from_user.full_name}\nیوزرنیم: {username}\nآیدی: `{uid}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
             except: pass
     else:
         await q.answer("❌ هنوز عضو نشدی!", show_alert=True)
 
-# (بقیه توابع دقیقا مثل کد قبلی هستن و نیازی به تغییرشون نیست)
 async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_state.pop(update.callback_query.from_user.id, None)
     await show_main_menu(update, context)
@@ -187,7 +181,7 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "reject":
         cur.execute("UPDATE users SET status='none' WHERE user_id=?", (uid,))
         conn.commit()
-        await q.edit_message_text("❌ رد شد.")
+        await q.edit_message_text("❌ رد شد. کاربر می‌تواند دوباره درخواست دهد.")
 
 async def routine_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -238,6 +232,27 @@ async def answer_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del user_states[uid]
         await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
 
+# ========== سیستم پیام ناشناس ==========
+async def anon_msg_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    admin_state[q.from_user.id] = {"step": "anon_msg"}
+    await q.edit_message_text("✉️ لطفاً پیام خود را بنویسید. این پیام به صورت ناشناس برای ادمین ارسال می‌شود:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 لغو", callback_data="back_menu")]]))
+
+async def process_anon_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in admin_state or admin_state[uid]["step"] != "anon_msg": return
+    msg_text = update.message.text
+    del admin_state[uid]
+    
+    await update.message.reply_text("✅ پیام شما به صورت ناشناس برای ادمین ارسال شد.")
+    
+    # ارسال به همه ادمین‌ها
+    for adm in get_all_admins():
+        try: await context.bot.send_message(adm, f"📩 پیام ناشناس جدید:\n\n{msg_text}")
+        except: pass
+
+# ========== پنل مدیریت ==========
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -470,6 +485,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     step = s["step"]
     t = update.message.text
     
+    if step == "anon_msg":
+        await process_anon_msg(update, context)
+        return
+    
     if step == "bulk_text":
         await process_bulk_text(update, context)
         return
@@ -539,6 +558,7 @@ def main():
     app.add_handler(CallbackQueryHandler(approve_user, pattern="^(approve|reject)_"))
     app.add_handler(CallbackQueryHandler(routine_click, pattern="^routine_"))
     app.add_handler(CallbackQueryHandler(answer_click, pattern="^ans_"))
+    app.add_handler(CallbackQueryHandler(anon_msg_start, pattern="^anon_msg$"))
     app.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
     app.add_handler(CallbackQueryHandler(manage_admins, pattern="^manage_admins$"))
     app.add_handler(CallbackQueryHandler(add_admin_start, pattern="^add_admin$"))
