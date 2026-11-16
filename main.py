@@ -13,9 +13,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
 ADMIN_IDS = [8818126928] 
 
-MAX_CONCURRENT_USERS = 50
-active_users = {} 
-
 CHANNELS = [
     {"name": "آکادمی سراوندی", "link": "https://t.me/akademi_saravandi", "chat_id": "@akademi_saravandi"},
     {"name": "گروه آکادمی", "link": "https://t.me/Gakademi_saravandi", "chat_id": "@Gakademi_saravandi"}
@@ -80,13 +77,6 @@ async def check_membership(user_id, context):
             if (await context.bot.get_chat_member(chat_id, user_id)).status not in ["member", "administrator", "creator"]: return False
         except: return False
     return True
-
-def clean_inactive_users():
-    while True:
-        now = time.time()
-        to_remove = [uid for uid, start_t in active_users.items() if now - start_t > 600]
-        for uid in to_remove: del active_users[uid]
-        time.sleep(60)
 
 async def send_morning(context: ContextTypes.DEFAULT_TYPE):
     if not is_auto_msg_on(): return
@@ -199,23 +189,14 @@ async def routine_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(uid) and get_user_status(uid) != "approved":
         await q.answer("⏳ تایید نشدی!", show_alert=True)
         return
-    
-    clean_inactive_users()
-    if not is_admin(uid) and uid not in active_users:
-        if len(active_users) >= MAX_CONCURRENT_USERS:
-            await q.answer("⚠️ ظرفیت ربات در حال حاضر تکمیل است. لطفاً چند دقیقه دیگر مراجعه کنید.", show_alert=True)
-            return
-        active_users[uid] = time.time()
 
     row = cur.execute("SELECT used_at FROM attempts WHERE user_id=? AND routine=? ORDER BY used_at DESC LIMIT 1", (uid, r)).fetchone()
     if row and (datetime.datetime.now() - datetime.datetime.fromisoformat(row[0])) < datetime.timedelta(hours=12):
         await q.edit_message_text("⏳ ۱۲ ساعت صبر کن.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
-        if uid in active_users: del active_users[uid]
         return
     rows = cur.execute("SELECT id, q, a, b, c, d, correct, explanation FROM questions WHERE routine=? ORDER BY RANDOM() LIMIT 5", (r,)).fetchall()
     if not rows:
         await q.edit_message_text("📭 هنوز هیچ سوالی برای این بخش ثبت نشده است. لطفاً بعداً مراجعه کنید.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
-        if uid in active_users: del active_users[uid]
         return
     user_states[uid] = {"r": r, "q": rows, "i": 0, "sc": 0, "ans": []}
     await ask_q(update, context, uid)
@@ -247,7 +228,6 @@ async def answer_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = f"✅ نمره: {s['sc']} از {len(s['q'])}\n\nپاسخنامه:\n"
         for i, a in enumerate(s["ans"]): txt += f"\n{'✅' if a['ua']==a['cor'] else '❌'} {i+1}: جواب {a['cor']}\n{a['ex']}\n"
         del user_states[uid]
-        if uid in active_users: del active_users[uid]
         await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -542,7 +522,6 @@ async def confirm_new_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     threading.Thread(target=run_web_server, daemon=True).start()
-    threading.Thread(target=clean_inactive_users, daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.job_queue.run_daily(countdown_job, time=datetime.time(hour=22, minute=0))
     app.job_queue.run_daily(send_morning, time=datetime.time(hour=3, minute=30))
