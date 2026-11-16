@@ -122,7 +122,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif status == "pending":
         await update.message.reply_text("⏳ درخواست شما قبلاً ارسال شده. منتظر تایید باشید.")
     else:
-        await update.message.reply_text("⚠️ برای ارسال درخواست، روی /start بزنید.")
+        # ثبت خودکار کاربر جدید در وضعیت pending
+        cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, update.effective_user.full_name))
+        conn.commit()
+        await update.message.reply_text("✅ درخواست شما ارسال شد. منتظر تایید ادمین باشید.")
+        kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
+        for adm in get_all_admins():
+            try: await context.bot.send_message(adm, f"👤 درخواست جدید:\nنام: {update.effective_user.full_name}\nآیدی: `{uid}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+            except: pass
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
@@ -160,6 +167,7 @@ async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await q.answer("❌ هنوز عضو نشدی!", show_alert=True)
 
+# (بقیه توابع دقیقا مثل کد قبلی هستن و نیازی به تغییرشون نیست)
 async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_state.pop(update.callback_query.from_user.id, None)
     await show_main_menu(update, context)
