@@ -259,10 +259,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = []
     if has_perm(uid, "manage_tests"):
         kb.extend([
-            [InlineKeyboardButton("➕ تست جدید (درک مطلب)", callback_data="addq_arabic")],
-            [InlineKeyboardButton("➕ تست جدید (قرابت معنایی)", callback_data="addq_gharabat")],
-            [InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_samii")],
-            [InlineKeyboardButton("📥 افزودن چندتایی (گروهی)", callback_data="addq_bulk")],
+            [InlineKeyboardButton("➕ تست جدید (درک مطلب)", callback_data="addq_type_arabic")],
+            [InlineKeyboardButton("➕ تست جدید (قرابت معنایی)", callback_data="addq_type_gharabat")],
+            [InlineKeyboardButton("➕ تست جدید (سماعی)", callback_data="addq_type_samii")],
             [InlineKeyboardButton("📋 حذف تست‌ها", callback_data="manage_q")]
         ])
     if has_perm(uid, "manage_admins"): kb.append([InlineKeyboardButton("👤 مدیریت ادمین‌ها", callback_data="manage_admins")])
@@ -275,32 +274,36 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb.append([InlineKeyboardButton("🔙", callback_data="back_menu")])
     await q.edit_message_text("⚙️ پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
-async def add_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_question_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     if not has_perm(q.from_user.id, "manage_tests"): return
-    admin_state[q.from_user.id] = {"step": "bulk_routine"}
+    routine = q.data.replace("addq_type_", "")
     kb = [
-        [InlineKeyboardButton("درک مطلب", callback_data="bulk_arabic"), InlineKeyboardButton("قرابت", callback_data="bulk_gharabat"), InlineKeyboardButton("سماعی", callback_data="bulk_samii")],
+        [InlineKeyboardButton("✍️ افزودن تکی", callback_data=f"single_{routine}")],
+        [InlineKeyboardButton("📥 افزودن گروهی", callback_data=f"bulk_{routine}")],
         [InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]
     ]
-    await q.edit_message_text("تست‌ها برای کدام بخش باشند؟", reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text("چه نوع افزودنی می‌خواهید؟", reply_markup=InlineKeyboardMarkup(kb))
 
-async def add_bulk_routine(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_single_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    uid = q.from_user.id
-    if uid not in admin_state: return
-    r = q.data.replace("bulk_", "")
-    admin_state[uid]["routine"] = r
-    admin_state[uid]["step"] = "bulk_text"
+    routine = q.data.replace("single_", "")
+    admin_state[q.from_user.id] = {"routine": routine, "step": "q"}
+    await q.edit_message_text("مرحله ۱: صورت سوال:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="admin_panel")]]))
+
+async def add_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    routine = q.data.replace("bulk_", "")
+    admin_state[q.from_user.id] = {"routine": routine, "step": "bulk_text"}
     template = (
         "لطفاً تست‌ها را دقیقاً با این قالب بفرستید (هر تست با ### شروع می‌شود):\n\n"
         "###\nصورت سوال\nگزینه A\nگزینه B\nگزینه C\nگزینه D\nگزینه صحیح (مثلا B)\nپاسخ تشریحی\n\n"
         "###\nصورت سوال بعدی\n..."
     )
-    kb = [[InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]
-    await q.edit_message_text(template, reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text(template, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]))
 
 async def process_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -325,6 +328,7 @@ async def process_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     del admin_state[uid]
     await update.message.reply_text(f"✅ تعداد {saved_count} تست با موفقیت ذخیره شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
+# بقیه توابع دقیقا مثل قبل
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -455,12 +459,6 @@ async def set_countdown_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     admin_state[update.callback_query.from_user.id] = {"step": "cd_chat"}
     await update.callback_query.edit_message_text("آیدی کانال:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
-async def add_question_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    if not has_perm(q.from_user.id, "manage_tests"): return
-    admin_state[q.from_user.id] = {"routine": q.data.replace("addq_", ""), "step": "q"}
-    await q.edit_message_text("مرحله ۱: صورت سوال:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="admin_panel")]]))
-
 async def set_correct(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     temp_questions[q.from_user.id]["correct"] = q.data.replace("setcor_", "")
@@ -565,9 +563,9 @@ def main():
     app.add_handler(CallbackQueryHandler(manage_users, pattern="^manage_users$"))
     app.add_handler(CallbackQueryHandler(del_user, pattern="^deluser_"))
     app.add_handler(CallbackQueryHandler(toggle_auto_msg, pattern="^toggle_auto_msg$"))
-    app.add_handler(CallbackQueryHandler(add_question_start, pattern="^addq_"))
-    app.add_handler(CallbackQueryHandler(add_bulk_start, pattern="^addq_bulk$"))
-    app.add_handler(CallbackQueryHandler(add_bulk_routine, pattern="^bulk_"))
+    app.add_handler(CallbackQueryHandler(add_question_type, pattern="^addq_type_"))
+    app.add_handler(CallbackQueryHandler(add_single_start, pattern="^single_"))
+    app.add_handler(CallbackQueryHandler(add_bulk_start, pattern="^bulk_"))
     app.add_handler(CallbackQueryHandler(set_correct, pattern="^setcor_"))
     app.add_handler(CallbackQueryHandler(save_question, pattern="^save_q$"))
     app.add_handler(CallbackQueryHandler(back_menu, pattern="^back_menu$"))
