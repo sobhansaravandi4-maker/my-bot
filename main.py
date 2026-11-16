@@ -2,7 +2,6 @@ import sqlite3
 import datetime
 import os
 import time
-import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 import jdatetime
@@ -118,68 +117,103 @@ async def countdown_job(context: ContextTypes.DEFAULT_TYPE):
         except: pass
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id; admin_state.pop(uid, None)
-    if is_admin(uid): await show_main_menu(update, context); return
+    uid = update.effective_user.id
+    admin_state.pop(uid, None)
+    if is_admin(uid):
+        await show_main_menu(update, context)
+        return
     if not await check_membership(uid, context):
         kb = [[InlineKeyboardButton(f"📢 {ch[0]}", url=ch[1])] for ch in get_join_channels()] + [[InlineKeyboardButton("✅ عضو شدم", callback_data="check_join")]]
-        await update.message.reply_text("⚠️ ابتدا در کانال و گروه زیر عضو شوید:", reply_markup=InlineKeyboardMarkup(kb)); return
+        await update.message.reply_text("⚠️ ابتدا در کانال و گروه زیر عضو شوید:", reply_markup=InlineKeyboardMarkup(kb))
+        return
     status = get_user_status(uid)
-    if status == "approved": await show_main_menu(update, context)
-    elif status == "pending": await update.message.reply_text("⏳ درخواست شما قبلاً ارسال شده. منتظر تایید باشید.")
-    else: await update.message.reply_text("⚠️ برای ارسال درخواست، روی /start بزنید.")
+    if status == "approved":
+        await show_main_menu(update, context)
+    elif status == "pending":
+        await update.message.reply_text("⏳ درخواست شما قبلاً ارسال شده. منتظر تایید باشید.")
+    else:
+        await update.message.reply_text("⚠️ برای ارسال درخواست، روی /start بزنید.")
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
-    kb = [[InlineKeyboardButton("🌙 درک مطلب", callback_data="routine_arabic")], [InlineKeyboardButton("🌙 قرابت", callback_data="routine_gharabat")], [InlineKeyboardButton("🌙 سماعی", callback_data="routine_samii")]]
-    if is_admin(uid): kb.append([InlineKeyboardButton("⚙️ پنل مدیریت", callback_data="admin_panel")])
-    if update.callback_query: await update.callback_query.edit_message_text("یک روتین انتخاب کن:", reply_markup=InlineKeyboardMarkup(kb))
-    else: await update.message.reply_text("یک روتین انتخاب کن:", reply_markup=InlineKeyboardMarkup(kb))
+    kb = [
+        [InlineKeyboardButton("🌙 درک مطلب", callback_data="routine_arabic")],
+        [InlineKeyboardButton("🌙 قرابت", callback_data="routine_gharabat")],
+        [InlineKeyboardButton("🌙 سماعی", callback_data="routine_samii")]
+    ]
+    if is_admin(uid):
+        kb.append([InlineKeyboardButton("⚙️ پنل مدیریت", callback_data="admin_panel")])
+    if update.callback_query:
+        await update.callback_query.edit_message_text("یک روتین انتخاب کن:", reply_markup=InlineKeyboardMarkup(kb))
+    else:
+        await update.message.reply_text("یک روتین انتخاب کن:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def check_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; uid = q.from_user.id
+    q = update.callback_query
+    uid = q.from_user.id
     if await check_membership(uid, context):
-        await q.message.delete(); status = get_user_status(uid)
-        if status == "approved": await show_main_menu(update, context); return
-        if status == "pending": await q.message.reply_text("⏳ درخواست شما در انتظار تایید است."); return
-        cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, q.from_user.full_name)); conn.commit()
+        await q.message.delete()
+        status = get_user_status(uid)
+        if status == "approved":
+            await show_main_menu(update, context)
+            return
+        if status == "pending":
+            await q.message.reply_text("⏳ درخواست شما در انتظار تایید است.")
+            return
+        cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, q.from_user.full_name))
+        conn.commit()
         await q.message.reply_text("✅ درخواست شما ارسال شد. منتظر تایید ادمین باشید.")
         kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
         for adm in get_all_admins():
             try: await context.bot.send_message(adm, f"👤 درخواست جدید:\nنام: {q.from_user.full_name}\nآیدی: `{uid}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
             except: pass
-    else: await q.answer("❌ هنوز عضو نشدی!", show_alert=True)
+    else:
+        await q.answer("❌ هنوز عضو نشدی!", show_alert=True)
 
 async def back_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin_state.pop(update.callback_query.from_user.id, None); await show_main_menu(update, context)
+    admin_state.pop(update.callback_query.from_user.id, None)
+    await show_main_menu(update, context)
 
 async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_students"): return
-    action, uid = q.data.split("_"); uid = int(uid)
+    action, uid = q.data.split("_")
+    uid = int(uid)
     if action == "approve":
-        cur.execute("UPDATE users SET status='approved' WHERE user_id=?", (uid,)); conn.commit()
+        cur.execute("UPDATE users SET status='approved' WHERE user_id=?", (uid,))
+        conn.commit()
         await q.edit_message_text("✅ تایید شد.")
         try: await context.bot.send_message(uid, "🎉 دسترسی شما تایید شد! /start بزنید.")
         except: pass
     elif action == "reject":
-        cur.execute("UPDATE users SET status='none' WHERE user_id=?", (uid,)); conn.commit()
+        cur.execute("UPDATE users SET status='none' WHERE user_id=?", (uid,))
+        conn.commit()
         await q.edit_message_text("❌ رد شد.")
 
 async def routine_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer(); uid = q.from_user.id; r = q.data.replace("routine_", "")
-    if not is_admin(uid) and get_user_status(uid) != "approved": await q.answer("⏳ تایید نشدی!", show_alert=True); return
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
+    r = q.data.replace("routine_", "")
+    if not is_admin(uid) and get_user_status(uid) != "approved":
+        await q.answer("⏳ تایید نشدی!", show_alert=True)
+        return
+    
     clean_inactive_users()
     if not is_admin(uid) and uid not in active_users:
         if len(active_users) >= MAX_CONCURRENT_USERS:
-            await q.answer("⚠️ ظرفیت ربات در حال حاضر تکمیل است. لطفاً چند دقیقه دیگر مراجعه کنید.", show_alert=True); return
+            await q.answer("⚠️ ظرفیت ربات در حال حاضر تکمیل است. لطفاً چند دقیقه دیگر مراجعه کنید.", show_alert=True)
+            return
         active_users[uid] = time.time()
+
     row = cur.execute("SELECT used_at FROM attempts WHERE user_id=? AND routine=? ORDER BY used_at DESC LIMIT 1", (uid, r)).fetchone()
     if row and (datetime.datetime.now() - datetime.datetime.fromisoformat(row[0])) < datetime.timedelta(hours=12):
         await q.edit_message_text("⏳ ۱۲ ساعت صبر کن.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
         if uid in active_users: del active_users[uid]
         return
     rows = cur.execute("SELECT id, q, a, b, c, d, correct, explanation FROM questions WHERE routine=? ORDER BY RANDOM() LIMIT 5", (r,)).fetchall()
-    if not rows: 
+    if not rows:
         await q.edit_message_text("سوالی نیست.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
         if uid in active_users: del active_users[uid]
         return
@@ -187,30 +221,38 @@ async def routine_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await ask_q(update, context, uid)
 
 async def ask_q(update, context, uid):
-    s = user_states[uid]; d = s["q"][s["i"]]
+    s = user_states[uid]
+    d = s["q"][s["i"]]
     txt = f"سوال {s['i']+1}:\n\n{d[1]}\n\nA) {d[2]}\nB) {d[3]}\nC) {d[4]}\nD) {d[5]}"
     kb = [[InlineKeyboardButton("A", callback_data="ans_A"), InlineKeyboardButton("B", callback_data="ans_B")], [InlineKeyboardButton("C", callback_data="ans_C"), InlineKeyboardButton("D", callback_data="ans_D")]]
     if update.callback_query: await update.callback_query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
     else: await context.bot.send_message(uid, txt, reply_markup=InlineKeyboardMarkup(kb))
 
 async def answer_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer(); uid = q.from_user.id
+    q = update.callback_query
+    await q.answer()
+    uid = q.from_user.id
     if uid not in user_states: return
-    s = user_states[uid]; d = s["q"][s["i"]]; ua = q.data.replace("ans_", "")
+    s = user_states[uid]
+    d = s["q"][s["i"]]
+    ua = q.data.replace("ans_", "")
     if ua == d[6]: s["sc"] += 1
-    s["ans"].append({"ua": ua, "cor": d[6], "ex": d[7]}); s["i"] += 1
-    if s["i"] < len(s["q"]): await ask_q(update, context, uid)
+    s["ans"].append({"ua": ua, "cor": d[6], "ex": d[7]})
+    s["i"] += 1
+    if s["i"] < len(s["q"]):
+        await ask_q(update, context, uid)
     else:
-        cur.execute("INSERT INTO attempts VALUES (?,?,?)", (uid, s["r"], datetime.datetime.now().isoformat())); conn.commit()
+        cur.execute("INSERT INTO attempts VALUES (?,?,?)", (uid, s["r"], datetime.datetime.now().isoformat()))
+        conn.commit()
         txt = f"✅ نمره: {s['sc']} از {len(s['q'])}\n\nپاسخنامه:\n"
         for i, a in enumerate(s["ans"]): txt += f"\n{'✅' if a['ua']==a['cor'] else '❌'} {i+1}: جواب {a['cor']}\n{a['ex']}\n"
         del user_states[uid]
         if uid in active_users: del active_users[uid]
         await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="back_menu")]]))
 
-# ====== پنل مدیریت ======
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not is_admin(q.from_user.id): return
     admin_state.pop(q.from_user.id, None)
     uid = q.from_user.id
@@ -234,7 +276,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("⚙️ پنل مدیریت:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def add_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_tests"): return
     admin_state[q.from_user.id] = {"step": "bulk_routine"}
     kb = [
@@ -244,13 +287,13 @@ async def add_bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("تست‌ها برای کدام بخش باشند؟", reply_markup=InlineKeyboardMarkup(kb))
 
 async def add_bulk_routine(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     uid = q.from_user.id
     if uid not in admin_state: return
     r = q.data.replace("bulk_", "")
     admin_state[uid]["routine"] = r
     admin_state[uid]["step"] = "bulk_text"
-    
     template = (
         "لطفاً تست‌ها را دقیقاً با این قالب بفرستید (هر تست با ### شروع می‌شود):\n\n"
         "###\nصورت سوال\nگزینه A\nگزینه B\nگزینه C\nگزینه D\nگزینه صحیح (مثلا B)\nپاسخ تشریحی\n\n"
@@ -262,12 +305,10 @@ async def add_bulk_routine(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in admin_state or admin_state[uid]["step"] != "bulk_text": return
-    
     routine = admin_state[uid]["routine"]
     text = update.message.text
     raw_blocks = text.split("###")
     saved_count = 0
-    
     for block in raw_blocks:
         block = block.strip()
         if not block: continue
@@ -277,18 +318,16 @@ async def process_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             a, b, c, d = lines[1], lines[2], lines[3], lines[4]
             correct = lines[5].upper()
             exp = "\n".join(lines[6:])
-            
             if correct in ["A", "B", "C", "D"]:
                 cur.execute("INSERT INTO questions (routine, q, a, b, c, d, correct, explanation) VALUES (?,?,?,?,?,?,?,?)", (routine, q_text, a, b, c, d, correct, exp))
                 saved_count += 1
-    
     conn.commit()
     del admin_state[uid]
     await update.message.reply_text(f"✅ تعداد {saved_count} تست با موفقیت ذخیره شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
-# ====== بقیه توابع ======
 async def manage_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_admins"): return
     kb = [[InlineKeyboardButton("➕ افزودن ادمین", callback_data="add_admin")], [InlineKeyboardButton("📋 لیست ادمین‌ها", callback_data="list_admins")], [InlineKeyboardButton("🔙", callback_data="admin_panel")]]
     await q.edit_message_text("مدیریت ادمین‌ها:", reply_markup=InlineKeyboardMarkup(kb))
@@ -298,14 +337,18 @@ async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.edit_message_text("آیدی عددی ادمین جدید را بفرستید:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_admins")]]))
 
 async def list_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     admins = cur.execute("SELECT user_id FROM admins").fetchall()
-    if not admins: await q.edit_message_text("هیچ ادمین اضافه‌ای وجود ندارد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_admins")]])); return
+    if not admins:
+        await q.edit_message_text("هیچ ادمین اضافه‌ای وجود ندارد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_admins")]]))
+        return
     kb = [[InlineKeyboardButton(f"⚙️ تنظیمات ادمین {a[0]}", callback_data=f"edit_admin_{a[0]}")] for a in admins] + [[InlineKeyboardButton("🔙", callback_data="manage_admins")]]
     await q.edit_message_text("لیست ادمین‌ها:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def edit_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     uid = int(q.data.replace("edit_admin_", ""))
     row = cur.execute("SELECT perms FROM admins WHERE user_id=?", (uid,)).fetchone()
     perms = row[0].split(",") if row and row[0] else []
@@ -318,7 +361,8 @@ async def edit_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(f"تنظیمات ادمین {uid}:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def toggle_perm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     parts = q.data.split("_")
     uid, p = int(parts[2]), parts[3]
     row = cur.execute("SELECT perms FROM admins WHERE user_id=?", (uid,)).fetchone()
@@ -326,39 +370,50 @@ async def toggle_perm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p in perms: perms.remove(p)
     else: perms.append(p)
     new_perms = ",".join(perms)
-    cur.execute("UPDATE admins SET perms=? WHERE user_id=?", (new_perms, uid)); conn.commit()
+    cur.execute("UPDATE admins SET perms=? WHERE user_id=?", (new_perms, uid))
+    conn.commit()
     await edit_admin(update, context)
 
 async def del_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     uid = int(q.data.replace("deladmin_", ""))
-    cur.execute("DELETE FROM admins WHERE user_id=?", (uid,)); conn.commit()
+    cur.execute("DELETE FROM admins WHERE user_id=?", (uid,))
+    conn.commit()
     await q.edit_message_text(f"✅ ادمین {uid} حذف شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="list_admins")]]))
 
 async def toggle_auto_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_broadcast"): return
     new_status = "off" if is_auto_msg_on() else "on"
-    cur.execute("UPDATE settings SET value=? WHERE key='auto_msg'", (new_status,)); conn.commit()
+    cur.execute("UPDATE settings SET value=? WHERE key='auto_msg'", (new_status,))
+    conn.commit()
     await admin_panel(update, context)
 
 async def manage_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_students"): return
     users = cur.execute("SELECT user_id, name FROM users WHERE status='approved'").fetchall()
-    if not users: await q.edit_message_text("هیچ دانش‌آموزی تایید نشده.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]])); return
+    if not users:
+        await q.edit_message_text("هیچ دانش‌آموزی تایید نشده.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
+        return
     kb = [[InlineKeyboardButton(f"🚫 قطع دسترسی {u[1]}", callback_data=f"deluser_{u[0]}")] for u in users] + [[InlineKeyboardButton("🔙", callback_data="admin_panel")]]
     await q.edit_message_text("لیست دانش‌آموزان:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def del_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_students"): return
     uid = int(q.data.replace("deluser_", ""))
-    cur.execute("UPDATE users SET status='none' WHERE user_id=?", (uid,)); conn.commit()
+    cur.execute("UPDATE users SET status='none' WHERE user_id=?", (uid,))
+    conn.commit()
     await q.edit_message_text(f"✅ دسترسی کاربر {uid} قطع شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_users")]]))
 
 async def manage_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_channels"): return
     kb = [[InlineKeyboardButton("➕ افزودن کانال/گروه جدید", callback_data="add_join_channel")], [InlineKeyboardButton("🔙", callback_data="admin_panel")]]
     await q.edit_message_text("مدیریت کانال‌ها:", reply_markup=InlineKeyboardMarkup(kb))
@@ -369,23 +424,30 @@ async def add_join_channel_start(update: Update, context: ContextTypes.DEFAULT_T
     await update.callback_query.edit_message_text("۱. اسم دکمه:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 لغو", callback_data="admin_panel")]]))
 
 async def manage_q(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_tests"): return
     kb = [[InlineKeyboardButton("درک مطلب", callback_data="delq_arabic"), InlineKeyboardButton("قرابت", callback_data="delq_gharabat"), InlineKeyboardButton("سماعی", callback_data="delq_samii")], [InlineKeyboardButton("🔙", callback_data="admin_panel")]]
     await q.edit_message_text("بخش:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def delete_q_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_tests"): return
-    r = q.data.replace("delq_", ""); rows = cur.execute("SELECT id, q FROM questions WHERE routine=?", (r,)).fetchall()
-    if not rows: await q.edit_message_text("خالیه.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_q")]])); return
+    r = q.data.replace("delq_", "")
+    rows = cur.execute("SELECT id, q FROM questions WHERE routine=?", (r,)).fetchall()
+    if not rows:
+        await q.edit_message_text("خالیه.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_q")]]))
+        return
     kb = [[InlineKeyboardButton(f"❌ {i}", callback_data=f"del_q_{i}")] for i, t in rows[:10]] + [[InlineKeyboardButton("🔙", callback_data="manage_q")]]
     await q.edit_message_text("لیست تست‌ها:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def delete_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     if not has_perm(q.from_user.id, "manage_tests"): return
-    cur.execute("DELETE FROM questions WHERE id=?", (int(q.data.replace("del_q_", "")),)); conn.commit()
+    cur.execute("DELETE FROM questions WHERE id=?", (int(q.data.replace("del_q_", "")),))
+    conn.commit()
     await q.edit_message_text("✅ حذف شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="manage_q")]]))
 
 async def set_countdown_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -407,15 +469,21 @@ async def set_correct(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def save_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    uid = q.from_user.id; t = temp_questions[uid]; r = admin_state[uid]["routine"]
-    cur.execute("INSERT INTO questions (routine, q, a, b, c, d, correct, explanation) VALUES (?,?,?,?,?,?,?,?)", (r, t["q"], t["a"], t["b"], t["c"], t["d"], t["correct"], t["exp"])); conn.commit()
-    del admin_state[uid]; del temp_questions[uid]
+    uid = q.from_user.id
+    t = temp_questions[uid]
+    r = admin_state[uid]["routine"]
+    cur.execute("INSERT INTO questions (routine, q, a, b, c, d, correct, explanation) VALUES (?,?,?,?,?,?,?,?)", (r, t["q"], t["a"], t["b"], t["c"], t["d"], t["correct"], t["exp"]))
+    conn.commit()
+    del admin_state[uid]
+    del temp_questions[uid]
     await q.edit_message_text("✅ ذخیره شد!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in admin_state: return
-    s = admin_state[uid]; step = s["step"]; t = update.message.text
+    s = admin_state[uid]
+    step = s["step"]
+    t = update.message.text
     
     if step == "bulk_text":
         await process_bulk_text(update, context)
@@ -424,7 +492,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == "add_admin_id":
         try:
             new_id = int(t)
-            s["new_admin_id"] = new_id; s["step"] = "add_admin_perms"; s["new_perms"] = []
+            s["new_admin_id"] = new_id
+            s["step"] = "add_admin_perms"
+            s["new_perms"] = []
             kb = []
             for p, label in [("manage_tests", "مدیریت تست‌ها"), ("manage_admins", "مدیریت ادمین‌ها"), ("manage_students", "مدیریت دانش‌آموزان"), ("manage_channels", "مدیریت کانال‌ها"), ("manage_broadcast", "ارسال خودکار"), ("manage_countdown", "شمارش معکوس")]:
                 kb.append([InlineKeyboardButton(f"❌ {label}", callback_data=f"set_new_perm_{p}")])
@@ -447,7 +517,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"پیش‌نمایش:\n{d['q']}\nA) {d['a']}\nB) {d['b']}\nC) {d['c']}\nD) {d['d']}\n✅ {d['correct']}\n📝 {d['exp']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ تایید", callback_data="save_q")], [InlineKeyboardButton("❌ لغو", callback_data="admin_panel")]]))
 
 async def set_new_perm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     uid = q.from_user.id
     if uid not in admin_state: return
     p = q.data.replace("set_new_perm_", "")
@@ -462,11 +533,13 @@ async def set_new_perm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
 
 async def confirm_new_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
+    q = update.callback_query
+    await q.answer()
     uid = q.from_user.id
     if uid not in admin_state: return
     s = admin_state[uid]
-    cur.execute("INSERT OR REPLACE INTO admins VALUES (?, ?)", (s["new_admin_id"], ",".join(s.get("new_perms", [])))); conn.commit()
+    cur.execute("INSERT OR REPLACE INTO admins VALUES (?, ?)", (s["new_admin_id"], ",".join(s.get("new_perms", []))))
+    conn.commit()
     del admin_state[uid]
     await q.edit_message_text(f"✅ ادمین {s['new_admin_id']} اضافه شد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_panel")]]))
 
