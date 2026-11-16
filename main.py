@@ -124,7 +124,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         cur.execute("INSERT OR REPLACE INTO users VALUES (?, 'pending', ?)", (uid, update.effective_user.full_name))
         conn.commit()
-        await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد. منتظر تایید باشید.")
+        await update.message.reply_text("⏳ درخواست شما برای ادمین ارسال شد.")
         
         kb = [[InlineKeyboardButton("✅ تایید", callback_data=f"approve_{uid}"), InlineKeyboardButton("❌ رد", callback_data=f"reject_{uid}")]]
         username = f"@{update.effective_user.username}" if update.effective_user.username else update.effective_user.full_name
